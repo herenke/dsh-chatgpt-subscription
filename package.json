@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/auth.js && node --check src/vault.js && node --check src/protocol.js && node --check src/cli.js && node --check src/adapter.js"
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/vault.js && node --check src/protocol.js && node --check src/cli.js && node --check src/adapter.js && node --check src/images.js && node --check src/replay.js"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": "0.2.2-alpha.3"

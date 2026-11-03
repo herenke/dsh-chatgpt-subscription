@@ -15,9 +15,26 @@ Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** 
 - AES-256-GCM encrypted credentials with a scrypt-derived key, owner-only Unix modes (0700 directory, 0600 file), atomic replacement, and a cross-process lock.
 - Fixed official HTTPS endpoints; no HTTP, custom gateways, redirects, telemetry, automatic paid fallback, or automatic inference retries.
 
-The plugin currently declares text input only to DSH. Image attachment loading and Responses image-input conversion have not been implemented, so this version cannot perform visual analysis of images. **This is a limitation of the initial plugin implementation, not a claim that ChatGPT subscriptions or every available model support only text.** DSH may project attachments for text-only models; that is not vision support. Adding images requires model-capability checks, attachment transport, and tests.
+### Capability status
 
-Audio, OpenAI-hosted tools, native reasoning-state replay, stop sequences, and temperature are also unsupported. Unsupported input fails explicitly. Reasoning summaries are not emitted to DSH, and historical reasoning text is not fabricated into native model reasoning. Tool loops requiring long reasoning still need live validation.
+| Capability | Current behavior |
+| --- | --- |
+| Text and local function tools | Supported, with tools grouped under the `dsh` namespace. |
+| Image input | Supported for user attachments and function-tool results through DSH's attachment service. |
+| Native reasoning replay | Successful native output, including encrypted reasoning, is reused only for the same account, provider, model, and unchanged visible content. |
+| OpenAI web search | Optional via `webSearch: true`; availability remains subject to model/account/workspace policy. |
+| Audio/video input and transcription | Unavailable on the documented ChatGPT plan route. |
+| Other hosted tools | Image generation, file search, Code Interpreter, native computer use, hosted MCP/connectors, and `tool_search` are excluded by the documented route. Local DSH tools remain separate. |
+| `temperature` and `stop` | Rejected with an explicit error: this subscription route excludes temperature, and Responses has no native stop-sequence field. |
+| Output-token cap | `maxTokens` is not forwarded because this route rejects `max_output_tokens`; it is **not an enforced cap**. |
+
+These boundaries follow the [official subscription preview restrictions](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), not the capabilities of every OpenAI model or of the separate paid API. No alternative billing endpoint is configured.
+
+Images use normalized PNG/JPEG/WebP/non-animated GIF attachments, encoded as inline data URLs. The plugin does not download arbitrary image URLs or open user-supplied paths. The host creates a request preview with at most 4096 pixels on either side and an 8 MiB encoded-byte target per image. Requests are limited to 16 retained image occurrences and 20 MiB of base64 image data; oversized histories signal DSH's oldest-image offload mechanism. Offloaded images are represented explicitly as omitted. Host normalization may change format/dimensions, and preview resizing can reduce small-text detail. The host must provide `attachments.readImageRequest`.
+
+If the account catalog explicitly declares text-only input, DSH substitutes image placeholders. When the catalog omits modality metadata, the adapter leaves capability unknown and permits image submission; the selected model/API determines whether it is accepted. No model is assumed to support vision merely because it appears in the picker.
+
+Encrypted reasoning remains opaque; the plugin does not decode it or fabricate hidden reasoning from visible text. Changed or compacted history falls back to visible text/tool history. Native replay is stored in the DSH session log, separately from the encrypted OAuth vault. Real subscription requests and long-running tool loops still need live validation.
 
 ## Development checks
 
@@ -68,6 +85,17 @@ node ~/Projects/dsh-chatgpt-subscription/src/cli.js usage
 
 Eligibility, model availability, plan usage, and credits depend on OpenAI's current policy and the actual authorization grant. Access is not guaranteed for every subscription. Usage may be shared with other ChatGPT/Codex usage. Limit errors do not trigger automatic retries or a switch to API billing. Manage usage at <https://chatgpt.com/settings/usage>.
 
+## Optional web search
+
+Web search is disabled by default. Set this plugin's DSH configuration to:
+
+```yaml
+config:
+  webSearch: true
+```
+
+This is the `config` of the existing `chatgpt-subscription` plugin row, not a second plugin entry. It allows the model to use OpenAI-hosted `web_search` on this route. Search queries are handled by OpenAI's hosted tool and remain subject to account policy and usage limits. Returned URL citations are shown as source links. Unsupported or unavailable search fails normally; it does not switch billing routes or turn on other hosted tools. Omit the field or set it to `false` to disable it. No API URL or token can be configured here.
+
 ## Security boundaries and dependencies
 
 See [SECURITY.md](SECURITY.md). Encryption protects credentials at rest; it does not protect against malware running as the same OS user, process environment/memory access, or untrusted DSH plugins. POSIX modes do not replace NTFS ACLs on Windows. Windows/Linux permission and browser behavior remain unverified; validation was performed on macOS.
@@ -80,6 +108,8 @@ Reviewed on 2026-11-03:
 
 - [Official registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
 - [Official accounts, sessions, and refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
+- [Official image inputs](https://developers.openai.com/api/docs/guides/images-vision)
+- [Official stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning)
 - [Official model discovery and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 - [OpenAI's public OIDC metadata](https://auth.openai.com/.well-known/openid-configuration)
 - DSH source snapshot [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb), particularly the interfaces in `packages/llm/llm/src`. Compatibility tests use the official npm package `@deepseek-ai/dsh-llm@0.2.2-alpha.3`.

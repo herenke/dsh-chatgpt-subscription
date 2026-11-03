@@ -8,7 +8,7 @@ const textEvents = [{ type: 'response.output_text.delta', output_index: 0, conte
 test('request maps system, developer, tool calls and results without mutating history', () => {
   const options = { model: 'account-model', system: 'system', maxTokens: 42, messages: [{ role: 'developer', content: [{ type: 'text', text: 'instructions' }] }, { role: 'assistant', content: [{ type: 'text', text: 'before' }, { type: 'tool-call', id: 'call_1', name: 'read', arguments: '{"a":1}' }] }, { role: 'tool', toolCallId: 'call_1', content: [{ type: 'text', text: 'result' }] }], tools: [{ name: 'read', description: 'read file', parameters: { type: 'object' } }] };
   const original = JSON.stringify(options), body = requestBody(options);
-  assert.equal(body.store, false); assert.equal(body.stream, true); assert.equal(body.max_output_tokens, 42); assert.equal(body.input[3].type, 'function_call'); assert.equal(body.input[4].call_id, 'call_1'); assert.equal(body.tools[0].strict, false); assert.equal(JSON.stringify(options), original);
+  assert.equal(body.store, false); assert.equal(body.stream, true); assert.equal(body.max_output_tokens, undefined); assert.equal(body.input[0].role, 'developer'); assert.equal(body.input[3].type, 'function_call'); assert.equal(body.input[4].call_id, 'call_1'); assert.equal(body.tools[0].tools[0].strict, false); assert.equal(JSON.stringify(options), original);
 });
 test('unsupported input/options fail explicitly', () => {
   for (const options of [{ stop: ['x'] }, { temperature: 0 }, { messages: [{ role: 'user', content: [{ type: 'image' }] }] }]) assert.throws(() => requestBody({ model: 'm', messages: [], ...options }));
