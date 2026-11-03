@@ -1,0 +1,44 @@
+{
+  "name": "dsh-chatgpt-subscription",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local ChatGPT plan provider for DeepSeek Harness using official Sign in with ChatGPT",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22",
+    "dsh": "0.2.2-alpha.3"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "bin": {
+    "dsh-chatgpt": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/vault.js && node --check src/protocol.js && node --check src/cli.js && node --check src/adapter.js"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "0.2.2-alpha.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "overrides": {
+    "zod": "4.6.6"
+  }
+}
