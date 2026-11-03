@@ -1,5 +1,7 @@
-import { randomBytes, createHash, timingSafeEqual, createPublicKey, verify } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, timingSafeEqual, createPublicKey, verify } from 'node:crypto';
 import { createServer } from 'node:http';
+import { LlmError } from '@deepseek-ai/dsh-llm';
+import { httpError } from './errors.js';
 
 export const ISSUER = 'https://auth.openai.com';
 export const RESOURCE = 'https://api.openai.com/v1';
@@ -57,15 +59,19 @@ export async function callbackListener(attempt, { timeoutMs = 180000, signal } =
   if (signal?.aborted) aborted();
   return { redirectUri, result, close: aborted };
 }
-export async function officialFetch(url, init = {}, fetcher = fetch) {
-  // Exact allowlist: never forward credentials via redirects or arbitrary base URLs.
+export async function officialFetch(url, init = {}, fetcher = fetch, { timeoutMs } = {}) {
   if (![TOKEN, REVOKE, JWKS, `${RESOURCE}/models`, `${RESOURCE}/responses`].includes(url)) throw new Error('Untrusted OpenAI endpoint.');
-  try { return await fetcher(url, { ...init, redirect: 'error', signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000) }); }
-  catch { throw new Error(init.signal?.aborted ? 'Request cancelled.' : 'OpenAI network request failed.'); }
+  // Streaming inference has no total deadline. The caller's AbortSignal remains
+  // attached to fetch/body; administrative endpoints retain bounded deadlines.
+  const streaming = url === `${RESOURCE}/responses`;
+  const deadline = timeoutMs ?? (url.endsWith('/models') ? 30000 : 120000);
+  const signal = streaming ? init.signal : init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(deadline)]) : AbortSignal.timeout(deadline);
+  try { return await fetcher(url, { ...init, redirect: 'error', signal }); }
+  catch { throw new LlmError(init.signal?.aborted ? 'Request cancelled.' : 'OpenAI network request failed.', init.signal?.aborted ? 'ABORTED' : signal?.aborted ? 'TIMEOUT' : 'TRANSPORT'); }
 }
 export async function tokenRequest(fields, signal, fetcher) {
   const response = await officialFetch(TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields), signal }, fetcher);
-  if (!response.ok) throw new Error(`OpenAI authorization failed (HTTP ${response.status}); reconnect if the grant expired.`);
+  if (!response.ok) throw await httpError(response);
   let data;
   try { data = await response.json(); } catch { throw new Error('Invalid OpenAI token response.'); }
   if (!data || typeof data !== 'object' || (data.refresh_token !== undefined && (typeof data.refresh_token !== 'string' || !data.refresh_token)) || (data.scope !== undefined && typeof data.scope !== 'string')) throw new Error('Invalid token response.');
@@ -91,23 +97,51 @@ export async function verifyIdentity(jwt, clientId, nonce, fetcher) {
 }
 export function credentials(data, previous = {}) {
   const granted = typeof data.scope === 'string' ? data.scope.split(/\s+/).filter(Boolean) : previous.scopes ?? [];
-  return { ...previous, accessToken: data.access_token, refreshToken: data.refresh_token ?? previous.refreshToken, idToken: data.id_token ?? previous.idToken, scopes: granted, expiresAt: Date.now() + data.expires_in * 1000 };
+  return { ...previous, sessionId: previous.sessionId ?? (previous.accessToken ? undefined : randomUUID()), accessToken: data.access_token, refreshToken: data.refresh_token ?? previous.refreshToken, idToken: data.id_token ?? previous.idToken, scopes: granted, expiresAt: Date.now() + data.expires_in * 1000 };
+}
+export async function vaultSnapshot(vault) {
+  return vault.snapshot ? vault.snapshot() : vault.transaction(state => structuredClone(state));
+}
+function activeProfile(state) {
+  const profile = state.profiles[state.active];
+  if (!profile?.accessToken) throw new LlmError('Sign in first using the dsh-chatgpt CLI.', 'MISSING_CREDENTIAL');
+  if (!profile.scopes?.includes(PLAN_SCOPE)) throw new LlmError('ChatGPT plan usage was not granted. Reauthorize and review the plan permission.', 'AUTH');
+  return profile;
+}
+export function sameSession(a, b) {
+  return !!a?.accessToken && !!b?.accessToken && a.clientId === b.clientId && a.subject === b.subject && a.sessionId === b.sessionId;
 }
 export async function accessSession(vault, signal, fetcher) {
-  const session = await vault.transaction(async state => {
-    const profile = state.profiles[state.active];
-    if (!profile?.accessToken) throw new Error('Sign in first using the dsh-chatgpt CLI.');
-    if (!profile.scopes?.includes(PLAN_SCOPE)) throw new Error('ChatGPT plan usage was not granted. Reauthorize and review the plan permission.');
-    let next = profile;
-    if (profile.expiresAt <= Date.now() + 60000) {
-      if (!profile.refreshToken) throw new Error('Session expired; sign in again.');
-      const data = await tokenRequest({ grant_type: 'refresh_token', client_id: profile.clientId, refresh_token: profile.refreshToken, resource: RESOURCE }, signal, fetcher);
-      if (data.id_token) { const identity = await verifyIdentity(data.id_token, profile.clientId, undefined, fetcher); if (identity.subject !== profile.subject) throw new Error('Refreshed identity changed.'); }
-      next = credentials(data, profile); state.profiles[state.active] = next;
+  signal?.throwIfAborted();
+  const first = activeProfile(await vaultSnapshot(vault));
+  if (first.expiresAt > Date.now() + 60000) return { ...first };
+  const refresh = async () => {
+    const state = await vaultSnapshot(vault), profile = activeProfile(state), id = state.active;
+    if (!sameSession(first, profile)) throw new LlmError('ChatGPT account changed; prepare a new request.', 'AUTH');
+    if (profile.expiresAt > Date.now() + 60000) return { ...profile };
+    if (!profile.refreshToken) throw new LlmError('Session expired; sign in again.', 'AUTH');
+    const data = await tokenRequest({ grant_type: 'refresh_token', client_id: profile.clientId, refresh_token: profile.refreshToken, resource: RESOURCE }, signal, fetcher);
+    if (data.id_token) { const identity = await verifyIdentity(data.id_token, profile.clientId, undefined, fetcher); if (identity.subject !== profile.subject) throw new LlmError('Refreshed identity changed.', 'AUTH'); }
+    const next = credentials(data, profile);
+    const committed = await vault.transaction(current => {
+      const saved = current.profiles[id];
+      if (!sameSession(profile, saved) || saved.refreshToken !== profile.refreshToken) return { saved: false, active: false };
+      current.profiles[id] = next;
+      return { saved: true, active: current.active === id };
+    });
+    if (!committed.saved && next.refreshToken) {
+      // A concurrent logout/re-login must not leave the discarded renewable
+      // session usable. Never revoke an inactive account that we did save.
+      try { await officialFetch(REVOKE, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: next.refreshToken, token_type_hint: 'refresh_token', client_id: profile.clientId }) }, fetcher); } catch { /* local credentials remain cleared; never log tokens */ }
     }
+    // Persist a known rotated token even if this caller cancelled after exchange.
+    // Cancellation must not strand the renewable session on its consumed token.
+    signal?.throwIfAborted();
+    if (!committed.active) throw new LlmError('ChatGPT account changed or signed out during refresh.', 'AUTH');
+    if (!next.scopes.includes(PLAN_SCOPE)) throw new LlmError('ChatGPT plan usage is unavailable.', 'AUTH');
     return { ...next };
-  });
-  // Commit a rotating refresh token even when the new grant removes plan use.
-  if (!session.scopes.includes(PLAN_SCOPE)) throw new Error('ChatGPT plan usage is unavailable.');
-  return session;
+  };
+  // A separate cross-process refresh mutex prevents simultaneous consumption of
+  // a rotating token. Normal snapshots/state updates never wait for its network.
+  return vault.exclusive ? vault.exclusive('refresh', refresh, { signal }) : refresh();
 }

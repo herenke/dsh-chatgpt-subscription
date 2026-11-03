@@ -17,7 +17,7 @@ test('vault ciphertext conceals tokens; wrong password and tampering fail', () =
 });
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-chatgpt-test-')); await chmod(root, 0o700);
-  t.after(() => rm(root, { recursive: true, force: true })); return new Vault(join(root, 'accounts.vault'), passphrase);
+  t.after(() => rm(root, { recursive: true, force: true })); return new Vault(join(root, 'accounts.vault'), passphrase, {lockWaitMs:100,pollMs:5});
 }
 test('vault atomic writes retain host ID and use owner-only modes', async t => {
   const vault = await fixture(t); const host = await vault.transaction(s => s.hostId);

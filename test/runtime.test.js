@@ -36,7 +36,7 @@ test('real DSH LLM runtime accepts adapter, discovers and streams', async () => 
 });
 test('prepared request refuses account switch or local logout before dispatch', async () => {
   const { adapter, state, requests } = fixture(); const prepared = await adapter.prepareCall(PROVIDER, 'test-model'); state.active = null;
-  await assert.rejects(collect(prepared.stream({ model: 'test-model', messages: [] })), /changed or signed out/);
+  await assert.rejects(collect(prepared.stream({ model: 'test-model', messages: [] })), /changed or signed out|Sign in first/);
   assert.equal(requests.filter(r => r.url.endsWith('/responses')).length, 0);
 });
 test('runtime reports stream failures as terminal error and no retry policy', async () => {

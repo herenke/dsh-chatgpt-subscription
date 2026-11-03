@@ -1,13 +1,15 @@
 import { officialFetch, RESOURCE } from './auth.js';
 import { prepareImages, imageContent } from './images.js';
 import { saveReplay, readReplay } from './replay.js';
+import { LlmError } from '@deepseek-ai/dsh-llm';
+import { httpError, providerError } from './errors.js';
 
 export async function listModels(session, headers = {}, signal, fetcher) {
   const response = await officialFetch(`${RESOURCE}/models`, { headers: { ...headers, Authorization: `Bearer ${session.accessToken}` }, signal }, fetcher);
-  if (!response.ok) throw new Error(`OpenAI model discovery failed (HTTP ${response.status}).`);
+  if (!response.ok) throw await httpError(response);
   const body = await response.json();
   if (!Array.isArray(body.models)) throw new Error('Unexpected ChatGPT model catalog.');
-  return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug.length > 0).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug, ...(Array.isArray(m.input_modalities) && m.input_modalities.includes('text') ? { inputModalities: ['text', ...(m.input_modalities.includes('image') ? ['image'] : [])] } : {}) }));
+  return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug.length > 0).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug, ...(Number.isSafeInteger(m.context_window) && m.context_window > 0 ? { contextWindow: m.context_window } : {}), ...(Array.isArray(m.input_modalities) && m.input_modalities.includes('text') ? { inputModalities: ['text', ...(m.input_modalities.includes('image') ? ['image'] : [])] } : {}) }));
 }
 export function requestBody(options, versions = new Map(), features = {}) {
   if (options.stop?.length) throw new Error('Stop sequences are not supported by this Responses adapter.');
@@ -132,11 +134,10 @@ export async function* responseChunks(events, features = {}) {
       }
       completed = true; yield { type: 'finish', reason: { kind: tools ? 'tool-calls' : 'stop' }, ...(replayState ? { replayState } : {}) }; return;
     } else if (e.type === 'response.failed' || e.type === 'error') {
-      const code = e.response?.error?.code ?? e.code;
-      const known = ['subscription_sharing_usage_limit_exceeded', 'subscription_sharing_usage_unavailable'];
-      throw new Error(known.includes(code) ? `ChatGPT plan unavailable (${code}). Review https://chatgpt.com/settings/usage; retrying does not reset limits.` : 'OpenAI response failed.');
+      throw providerError(e.response?.error ?? e);
     } else if (e.type === 'response.incomplete') {
-      throw new Error('OpenAI response incomplete; partial output must not be treated as success.');
+      const reason = e.response?.incomplete_details?.reason;
+      throw new LlmError(`OpenAI response incomplete${['max_output_tokens','content_filter'].includes(reason) ? ` (${reason})` : ''}; partial output must not be treated as success.`, 'INCOMPLETE_RESPONSE');
     } else if (e.type === 'response.output_item.added' && !['message', 'reasoning', ...(features.webSearch ? ['web_search_call'] : [])].includes(e.item?.type)) {
       throw new Error('Unsupported OpenAI output item.');
     } else if (e.type === 'response.refusal.delta' || e.type === 'response.refusal.done') {
@@ -151,7 +152,7 @@ export async function* infer(session, options, headers = {}, fetcher, features =
   const replay = { session, model: options.model, provider: options.provider };
   const body = requestBody(options, versions, { ...features, replay });
   const response = await officialFetch(`${RESOURCE}/responses`, { method: 'POST', headers: { ...headers, Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: options.signal }, fetcher);
-  if (!response.ok) throw new Error(`OpenAI inference failed (HTTP ${response.status}). No automatic paid fallback is configured.`);
+  if (!response.ok) throw await httpError(response);
   if (!response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Expected an OpenAI event stream.');
   yield* responseChunks(sseEvents(response.body), { ...features, replay });
 }

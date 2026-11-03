@@ -4,11 +4,11 @@
 
 使用 OpenAI 官方 **Sign in with ChatGPT**，让 DeepSeek Harness 的 agent 循环通过公共 Responses API 使用符合条件的 ChatGPT 订阅额度。独立实现；非 OpenAI 或 DeepSeek 官方插件。没有读取 Codex/ChatGPT 现有凭据，也不使用 `backend-api` 私有接口。
 
-**状态：本地开发预览。** 已完成离线协议、安全和实际 DSH LLM 运行时的模拟请求测试；尚未用真实账号登录、消耗订阅额度、安装进用户 DSH，或验证桌面界面。不能据此宣称可用额度或生产可用。
+**状态：本地开发预览。** 已完成离线协议、安全和实际 DSH LLM 运行时的模拟请求测试；另已使用本机 macOS DSH CLI，在隔离配置中加载源码目录与打包产物。尚未用真实账号登录、消耗订阅额度、修改日常 DSH profile，或验证桌面界面。不能据此宣称可用额度或生产可用。
 
 ## 支持范围
 
-- Node.js 22+；DSH **0.2.2-alpha.3**，精确版本门禁。
+- Node.js 22+；DSH **0.2.1-rc.5** 或 **0.2.2-alpha.3**；版本门禁只放行已验证的这两个版本。
 - 按账号获取模型目录，不硬编码模型；文本对话、函数工具调用、工具结果、流式文本与用量统计。
 - 多个账号/工作区注册、选择、重新授权、刷新、登出与会话撤销。
 - 授权码 + PKCE S256、随机 state/nonce、JWKS RS256 验签、issuer/audience/expiry/nonce/subject 校验。
@@ -51,11 +51,16 @@ npm pack --dry-run --ignore-scripts
 
 ## 本地使用（需用户自己完成真实登录）
 
-先核对 `dsh --version`；不匹配时先评估接口差异，不要通过版本豁免强行加载。为用户自己的 web profile 安装本地目录的参考命令如下；也可在 DSH 插件管理器添加本地 bundle。安装会改变该 profile，本次开发没有执行此步骤。
+先核对 `dsh --version`；不匹配时先评估接口差异，不要通过版本豁免强行加载。为用户自己的 web profile 安装本地目录的参考命令如下；也可在 DSH 插件管理器添加本地 bundle。安装会改变该 profile；开发验证只使用临时 `DSH_HOME`，没有修改日常用户配置。
 
 ```sh
+# CLI/web 使用：
 dsh plugin --profile web add "file:$HOME/Projects/dsh-chatgpt-subscription"
+# Desktop App：先完全退出应用，安装后重新打开：
+dsh plugin --profile desktop add "file:$HOME/Projects/dsh-chatgpt-subscription"
 ```
+
+选择实际使用的 profile。重启后核对 provider 已注册；未登录时模型发现会提示缺少凭据或需要登录。激活插件本身不需要口令，也不会自动打开授权页面。
 
 在启动 CLI 和 DSH 的**同一个终端环境**设置强口令。macOS 默认 zsh 可隐藏读取，避免把口令字面量写入 shell 历史：
 
@@ -68,7 +73,7 @@ node ~/Projects/dsh-chatgpt-subscription/src/cli.js login
 dsh web
 ```
 
-请使用随机且足够长的独立口令；16 字符只是最低检查，不能保证口令强度。不要把口令写进仓库、`.env`、profile 配置或聊天。GUI 启动的 DSH 通常不会继承终端变量，此版本需要从上述终端启动。口令必须保持一致；遗忘后无法解密，需在 ChatGPT 撤销连接后重新建立本地凭据。默认凭据位置：`~/.config/dsh-chatgpt-subscription/accounts.vault`。
+请使用随机且足够长的独立口令；16 字符只是最低检查，不能保证口令强度。不要把口令写进仓库、`.env`、profile 配置或聊天。GUI 启动的 DSH 通常不会继承终端变量，可使用下述私有口令文件，或从上述终端启动。口令必须保持一致；遗忘后无法解密，需在 ChatGPT 撤销连接后重新建立本地凭据。默认凭据位置：`~/.config/dsh-chatgpt-subscription/accounts.vault`。
 
 CLI 会打开系统浏览器，提示 **Continue with ChatGPT**。在 OpenAI 页面核对账号、工作区、授权项与额度设置；插件不会自动开启 credits 或自动购买。授权地址可能带有仅发给 OpenAI 的 `id_token_hint`，因此不输出到终端。只在真实身份验证完成后激活账号；初次注册返回的 client ID 会先保存，以便授权码过期后重试。
 
@@ -81,9 +86,30 @@ node ~/Projects/dsh-chatgpt-subscription/src/cli.js logout
 node ~/Projects/dsh-chatgpt-subscription/src/cli.js usage
 ```
 
-`accounts` 中 `*` 表示当前账号；切换后刷新 DSH 模型列表，选择 `ChatGPT subscription` provider 下该账号可见的模型。账号信息显示在模型说明及 CLI 中，不把令牌发给 DSH 前端。`logout` 会尝试撤销 refresh token，然后清除本地令牌，保留 client/account 映射与 host ID；撤销未确认时明确提示到 ChatGPT 设置中断开连接。
+`accounts` 中 `*` 表示当前账号；切换后刷新 DSH 模型列表，选择 `ChatGPT subscription` provider 下该账号可见的模型。账号信息显示在模型说明及 CLI 中，不把令牌发给 DSH 前端。`logout` 先清除本地令牌，再在状态锁之外尝试远程撤销，保留 client/account 映射与 host ID；撤销未确认时明确提示到 ChatGPT 设置中断开连接。
 
 账号 eligibility、模型、额度和 credits 可用性取决于 OpenAI 当前政策及实际授权返回，不保证每个订阅可用。额度与 ChatGPT/Codex 其他用量可能共享；遇到限额不自动重试，不自动切到 API 账单。管理额度：<https://chatgpt.com/settings/usage>。
+
+## 桌面口令与上下文配置
+
+GUI 启动可使用仓库之外的私有目录（0700）和仅本人可读写的普通口令文件（0600）。默认文件为 `~/.config/dsh-chatgpt-subscription/passphrase`，内容为单行强口令，可带一个结尾换行。插件不会自动创建该文件或生成口令。文件方案方便 GUI 启动，但解密秘密也保存在磁盘上，**不是系统钥匙串**，无法防御同一系统用户同时读取两份文件。
+
+口令来源优先级：插件 `config.passphraseFile` → `DSH_CHATGPT_VAULT_PASSWORD` → `DSH_CHATGPT_VAULT_PASSWORD_FILE` → 默认私有文件。显式指定的来源无效时直接报错，不静默换来源。路径必须为绝对路径或以 `~/` 开头，拒绝口令文件软链接。CLI 使用相同默认文件或上述环境变量；若 Desktop 配置了自定义路径，运行 CLI 时用 `DSH_CHATGPT_VAULT_PASSWORD_FILE`、`DSH_CHATGPT_VAULT_PATH` 指向同一位置。不要在 DSH 配置中写入口令本身。
+
+现有插件条目可选配置示例：
+
+```yaml
+config:
+  passphraseFile: ~/.config/dsh-chatgpt-subscription/passphrase
+  vaultPath: ~/.config/dsh-chatgpt-subscription/accounts.vault
+  contextWindow: 32768
+  modelContextWindows:
+    YOUR_MODEL_SLUG: 32768
+```
+
+示例数值应按所选模型实际容量调整。容量来源依次为：单模型覆盖 → 全局配置 → 模型目录的 `context_window` → **32768 token 估计值**。回退值只是保守预算，不代表服务端容量保证；模型说明会标注来源。DSH 可据此自动压缩上下文；服务端上下文溢出会映射为可恢复错误码。这里没有承诺输出 token 上限。
+
+模型目录缓存 60 秒，并发发现共享请求；账号、登录会话或 token 变化时失效。普通凭据读取不加锁、不写盘；刷新使用独立的跨进程刷新锁，网络请求不占用状态写锁。锁竞争最多等待 130 秒，绝不自动抢占。流式推理不设内部总时长上限，由 DSH 的取消信号控制；模型目录超时 30 秒，token/撤销/JWKS 请求超时 120 秒。不完整响应会报告原因，不会被当成已完成的工具调用。
 
 ## 可选网页搜索
 
@@ -112,6 +138,6 @@ DSH 的固定版本依赖 Zod 4.4.3，命中 [GHSA-mrhx-c7xc-m3w5](https://githu
 - [官方无状态 reasoning](https://developers.openai.com/api/docs/guides/reasoning)
 - [官方模型发现与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 - [OpenAI OIDC 公共元数据](https://auth.openai.com/.well-known/openid-configuration)
-- DSH 官方源码快照 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb)，重点核对 `packages/llm/llm/src` 接口；实际兼容测试使用 npm 官方包 `@deepseek-ai/dsh-llm@0.2.2-alpha.3`。
+- DSH 官方源码快照 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb)，重点核对 `packages/llm/llm/src` 接口；兼容测试分别使用 npm 官方包 `@deepseek-ai/dsh-llm@0.2.1-rc.5` 和 `@deepseek-ai/dsh-llm@0.2.2-alpha.3`。
 
 该项目未复制此前审查的社区插件源码，不需要该社区项目的凭据或客户端身份。协议事实和接口来自上述官方来源。
