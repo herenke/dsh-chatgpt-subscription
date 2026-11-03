@@ -1,21 +1,25 @@
 # DSH ChatGPT subscription
 
-使用 OpenAI 官方 **Sign in with ChatGPT**，让 DeepSeek Harness 的 agent 循环通过公共 Responses API 使用符合条件的 ChatGPT 订阅额度。独立实现；非 OpenAI 或 DeepSeek 官方插件。没有读取 Codex/ChatGPT 现有凭据，也不使用 `backend-api` 私有接口。
+**English** | [简体中文](README.zh-CN.md)
 
-**状态：本地开发预览。** 已完成离线协议、安全和实际 DSH LLM 运行时的模拟请求测试；尚未用真实账号登录、消耗订阅额度、安装进用户 DSH，或验证桌面界面。不能据此宣称可用额度或生产可用。
+Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** flow while keeping DeepSeek Harness's agent loop. Inference uses the public Responses API. This is an independent project, not an official OpenAI or DeepSeek plugin. It does not read existing Codex/ChatGPT credentials or use private `backend-api` endpoints.
 
-## 支持范围
+**Status: local development preview.** Offline security/protocol tests and mocked requests through the actual DSH LLM runtime have passed. Real account sign-in, subscription usage, installation into a user's DSH profile, and desktop rendering have not been tested. These results do not establish account eligibility or production readiness.
 
-- Node.js 22+；DSH **0.2.2-alpha.3**，精确版本门禁。
-- 按账号获取模型目录，不硬编码模型；文本对话、函数工具调用、工具结果、流式文本与用量统计。
-- 多个账号/工作区注册、选择、重新授权、刷新、登出与会话撤销。
-- 授权码 + PKCE S256、随机 state/nonce、JWKS RS256 验签、issuer/audience/expiry/nonce/subject 校验。
-- 凭据采用 AES-256-GCM 加密，scrypt 派生密钥；目录 0700、文件 0600、原子替换、跨进程互斥锁。
-- 固定 HTTPS 官方端点，拒绝 HTTP、自定义网关和重定向；无埋点、无自动付费兜底、无推理自动重试。
+## Supported scope
 
-当前不支持图片、音频、OpenAI 托管工具、reasoning 原生状态重放、stop 序列及 temperature；不支持的输入明确报错。DSH 会按文本能力投影附件，这不等同于视觉支持。推理摘要不向 DSH 输出，历史推理文本不伪造为模型原生 reasoning。需要长推理的工具链可靠性仍须真实环境验证。
+- Node.js 22+ and DSH **0.2.2-alpha.3**, with an exact DSH version requirement.
+- Account-specific model discovery instead of hardcoded models; text conversations, function tool calls/results, streaming text, and token usage.
+- Multiple account/workspace registrations, account selection, reauthorization, refresh, sign-out, and renewable-session revocation.
+- Authorization Code with PKCE S256, fresh state/nonce, JWKS RS256 signature verification, and issuer/audience/expiry/nonce/subject checks.
+- AES-256-GCM encrypted credentials with a scrypt-derived key, owner-only Unix modes (0700 directory, 0600 file), atomic replacement, and a cross-process lock.
+- Fixed official HTTPS endpoints; no HTTP, custom gateways, redirects, telemetry, automatic paid fallback, or automatic inference retries.
 
-## 开发验证
+The plugin currently declares text input only to DSH. Image attachment loading and Responses image-input conversion have not been implemented, so this version cannot perform visual analysis of images. **This is a limitation of the initial plugin implementation, not a claim that ChatGPT subscriptions or every available model support only text.** DSH may project attachments for text-only models; that is not vision support. Adding images requires model-capability checks, attachment transport, and tests.
+
+Audio, OpenAI-hosted tools, native reasoning-state replay, stop sequences, and temperature are also unsupported. Unsupported input fails explicitly. Reasoning summaries are not emitted to DSH, and historical reasoning text is not fabricated into native model reasoning. Tool loops requiring long reasoning still need live validation.
+
+## Development checks
 
 ```sh
 cd ~/Projects/dsh-chatgpt-subscription
@@ -26,30 +30,30 @@ npm audit
 npm pack --dry-run --ignore-scripts
 ```
 
-没有 install/postinstall/prepare 构建脚本，无新增常规运行时依赖；运行时使用宿主提供的 `@deepseek-ai/dsh-llm`。锁文件用于复现实验环境。未发布 npm 包，`private: true` 防止误发布。
+There are no install/postinstall/prepare build scripts and no additional regular runtime dependencies. The host supplies `@deepseek-ai/dsh-llm`; the lockfile reproduces the development environment. No npm package has been published. `private: true` prevents accidental npm publication.
 
-## 本地使用（需用户自己完成真实登录）
+## Local use
 
-先核对 `dsh --version`；不匹配时先评估接口差异，不要通过版本豁免强行加载。为用户自己的 web profile 安装本地目录的参考命令如下；也可在 DSH 插件管理器添加本地 bundle。安装会改变该 profile，本次开发没有执行此步骤。
+Real sign-in must be completed by the user. Check `dsh --version` first. If the version differs, review interface compatibility rather than bypassing the version requirement. The following reference command adds the local bundle to your web profile; alternatively, use DSH's plugin manager. Installation changes that profile and was not performed during development.
 
 ```sh
-dsh plugin --profile web add file:/Users/keyee/Projects/dsh-chatgpt-subscription
+dsh plugin --profile web add "file:$HOME/Projects/dsh-chatgpt-subscription"
 ```
 
-在启动 CLI 和 DSH 的**同一个终端环境**设置强口令。macOS 默认 zsh 可隐藏读取，避免把口令字面量写入 shell 历史：
+Set a strong passphrase in the **same terminal environment** used to launch both the CLI and DSH. On macOS's default zsh, read it without echoing it or placing its literal value in shell history:
 
 ```zsh
 read -rs 'DSH_CHATGPT_VAULT_PASSWORD?Vault passphrase (16+ characters): '
 export DSH_CHATGPT_VAULT_PASSWORD
 printf '\n'
 node ~/Projects/dsh-chatgpt-subscription/src/cli.js login
-# 同一终端启动已配置好本地插件的 DSH：
+# Launch DSH, with the local plugin configured, from the same terminal:
 dsh web
 ```
 
-请使用随机且足够长的独立口令；16 字符只是最低检查，不能保证口令强度。不要把口令写进仓库、`.env`、profile 配置或聊天。GUI 启动的 DSH 通常不会继承终端变量，此版本需要从上述终端启动。口令必须保持一致；遗忘后无法解密，需在 ChatGPT 撤销连接后重新建立本地凭据。默认凭据位置：`~/.config/dsh-chatgpt-subscription/accounts.vault`。
+Use a long, random, unique passphrase. The 16-character check is a minimum, not a guarantee of strength. Do not put it in the repository, `.env`, profile configuration, or chat. GUI-launched DSH generally does not inherit terminal variables; this version requires launching it from the configured terminal. Keep the same passphrase across launches. If it is lost, the vault cannot be decrypted; disconnect the app in ChatGPT before establishing new local credentials. Default vault: `~/.config/dsh-chatgpt-subscription/accounts.vault`.
 
-CLI 会打开系统浏览器，提示 **Continue with ChatGPT**。在 OpenAI 页面核对账号、工作区、授权项与额度设置；插件不会自动开启 credits 或自动购买。授权地址可能带有仅发给 OpenAI 的 `id_token_hint`，因此不输出到终端。只在真实身份验证完成后激活账号；初次注册返回的 client ID 会先保存，以便授权码过期后重试。
+The CLI opens the system browser and prompts you to **Continue with ChatGPT**. Review the account, workspace, permissions, and usage limits on OpenAI's page. The plugin does not automatically enable credits or purchases. Authorization URLs may contain an `id_token_hint` sent only to OpenAI, so they are not printed. An account becomes active only after identity verification. The issued client ID is saved before the initial code exchange so registration can be reused if the one-time code expires.
 
 ```sh
 node ~/Projects/dsh-chatgpt-subscription/src/cli.js accounts
@@ -60,24 +64,24 @@ node ~/Projects/dsh-chatgpt-subscription/src/cli.js logout
 node ~/Projects/dsh-chatgpt-subscription/src/cli.js usage
 ```
 
-`accounts` 中 `*` 表示当前账号；切换后刷新 DSH 模型列表，选择 `ChatGPT subscription` provider 下该账号可见的模型。账号信息显示在模型说明及 CLI 中，不把令牌发给 DSH 前端。`logout` 会尝试撤销 refresh token，然后清除本地令牌，保留 client/account 映射与 host ID；撤销未确认时明确提示到 ChatGPT 设置中断开连接。
+`accounts` marks the active account with `*`. After switching, refresh DSH's model list and choose a model available to that account under the `ChatGPT subscription` provider. Account details appear in model descriptions and the CLI; tokens are not sent to the DSH frontend. `logout` attempts to revoke the refresh token, then clears local tokens while retaining client/account mappings and the host ID. If remote revocation is unconfirmed, it tells you to disconnect the app in ChatGPT settings.
 
-账号 eligibility、模型、额度和 credits 可用性取决于 OpenAI 当前政策及实际授权返回，不保证每个订阅可用。额度与 ChatGPT/Codex 其他用量可能共享；遇到限额不自动重试，不自动切到 API 账单。管理额度：<https://chatgpt.com/settings/usage>。
+Eligibility, model availability, plan usage, and credits depend on OpenAI's current policy and the actual authorization grant. Access is not guaranteed for every subscription. Usage may be shared with other ChatGPT/Codex usage. Limit errors do not trigger automatic retries or a switch to API billing. Manage usage at <https://chatgpt.com/settings/usage>.
 
-## 安全边界与依赖
+## Security boundaries and dependencies
 
-详见 [SECURITY.md](SECURITY.md)。加密保护静态凭据文件，无法防御同一用户权限下恶意代码、读取进程环境/内存的攻击者或不可信 DSH 插件。Windows 的 POSIX mode 不能代替 NTFS ACL，未验证 Windows/Linux 的权限和浏览器行为；本轮验证平台是 macOS。
+See [SECURITY.md](SECURITY.md). Encryption protects credentials at rest; it does not protect against malware running as the same OS user, process environment/memory access, or untrusted DSH plugins. POSIX modes do not replace NTFS ACLs on Windows. Windows/Linux permission and browser behavior remain unverified; validation was performed on macOS.
 
-DSH 的固定版本依赖 Zod 4.4.3，命中 [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)（大集合验证内存耗尽）。本仓库开发依赖图通过 root `overrides` 固定 Zod 4.6.6，审计为 0；**作为插件安装时，依赖包的 overrides 不会修复宿主 DSH 的依赖图**。正式安装前需要宿主维护者评估并升级该依赖；不要把本仓库 `npm audit` 结果当作整个 DSH 的审计。
+The pinned DSH version depends on Zod 4.4.3, affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), a memory-exhaustion issue when validating oversized collections. This repository's development graph pins Zod 4.6.6 through root `overrides`; its recorded audit reported zero vulnerabilities. **Installing this plugin does not apply its overrides to the host DSH dependency graph.** Host maintainers must assess and update that dependency before production installation. This repository's audit is not an audit of the entire DSH host.
 
-## 实现依据
+## Implementation references
 
-核对日期：2026-11-03。
+Reviewed on 2026-11-03:
 
-- [官方注册与登录](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
-- [官方账号、会话和刷新](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
-- [官方模型发现与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-- [OpenAI OIDC 公共元数据](https://auth.openai.com/.well-known/openid-configuration)
-- DSH 官方源码快照 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb)，重点核对 `packages/llm/llm/src` 接口；实际兼容测试使用 npm 官方包 `@deepseek-ai/dsh-llm@0.2.2-alpha.3`。
+- [Official registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
+- [Official accounts, sessions, and refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
+- [Official model discovery and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+- [OpenAI's public OIDC metadata](https://auth.openai.com/.well-known/openid-configuration)
+- DSH source snapshot [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb), particularly the interfaces in `packages/llm/llm/src`. Compatibility tests use the official npm package `@deepseek-ai/dsh-llm@0.2.2-alpha.3`.
 
-该项目未复制此前审查的社区插件源码，不需要该社区项目的凭据或客户端身份。协议事实和接口来自上述官方来源。
+No source was copied from the previously reviewed community plugin. This project does not need that project's credentials or client identity. Protocol facts and interfaces come from the official sources above.
