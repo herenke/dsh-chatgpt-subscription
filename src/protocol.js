@@ -1,0 +1,118 @@
+import { officialFetch, RESOURCE } from './auth.js';
+
+export async function listModels(session, headers = {}, signal, fetcher) {
+  const response = await officialFetch(`${RESOURCE}/models`, { headers: { ...headers, Authorization: `Bearer ${session.accessToken}` }, signal }, fetcher);
+  if (!response.ok) throw new Error(`OpenAI model discovery failed (HTTP ${response.status}).`);
+  const body = await response.json();
+  if (!Array.isArray(body.models)) throw new Error('Unexpected ChatGPT model catalog.');
+  return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug.length > 0).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug }));
+}
+export function requestBody(options) {
+  if (options.stop?.length) throw new Error('Stop sequences are not supported by this Responses adapter.');
+  if (options.temperature !== undefined) throw new Error('Temperature is not supported by this initial ChatGPT plan adapter.');
+  const input = [];
+  if (options.system) input.push({ role: 'system', content: options.system });
+  for (const message of options.messages) {
+    const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content;
+    if (!Array.isArray(blocks)) throw new Error('Unsupported message content.');
+    if (message.role === 'tool') {
+      if (blocks.some(b => b.type !== 'text')) throw new Error('Unsupported tool result content.');
+      input.push({ type: 'function_call_output', call_id: message.toolCallId, output: blocks.map(b => b.text).join('\n') });
+      continue;
+    }
+    if (!['system', 'developer', 'user', 'assistant'].includes(message.role)) throw new Error('Unsupported message role.');
+    // Preserve interleaved text/tool order. Hidden reasoning is deliberately not fabricated or replayed.
+    for (const block of blocks) {
+      if (block.type === 'text') input.push({ role: message.role, content: block.text });
+      else if (block.type === 'tool-call' && message.role === 'assistant') input.push({ type: 'function_call', call_id: block.id, name: block.name, arguments: block.arguments });
+      else if (block.type === 'reasoning' && message.role === 'assistant') continue;
+      else throw new Error(`Unsupported content block: ${block.type}. This initial adapter supports text and function tools.`);
+    }
+  }
+  return {
+    model: options.model, input, stream: true, store: false,
+    ...(options.tools?.length ? { tools: options.tools.map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters, strict: false })) } : {}),
+    ...(options.maxTokens === undefined ? {} : { max_output_tokens: options.maxTokens }),
+    ...(options.reasoningEffort === undefined ? {} : { reasoning: { effort: options.reasoningEffort } }),
+  };
+}
+export async function* sseEvents(body) {
+  if (!body) throw new Error('Missing OpenAI response stream.');
+  const reader = body.getReader(), decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      // Do not replace trailing CR until the next byte arrives (CRLF can be split).
+      buffer = buffer.replace(/\r\n/g, '\n');
+      if (buffer.length > 4 * 1024 * 1024) throw new Error('OpenAI event exceeds size limit.');
+      let end;
+      while ((end = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+        const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
+        if (data && data !== '[DONE]') { let event; try { event = JSON.parse(data); } catch { throw new Error('Malformed OpenAI stream event.'); } yield event; }
+      }
+      if (done) { if (buffer.trim()) throw new Error('Truncated OpenAI stream event.'); break; }
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+export async function* responseChunks(events) {
+  const blocks = new Map(); let nextIndex = 0, tools = false, completed = false;
+  const keyOf = e => `${e.output_index}:${e.content_index ?? 0}`;
+  for await (const e of events) {
+    if (e.type === 'response.output_item.added' && e.item?.type === 'function_call') {
+      const key = `${e.output_index}:tool`;
+      if (blocks.has(key) || !e.item.call_id || !e.item.name) throw new Error('Invalid OpenAI tool event.');
+      tools = true;
+      const b = { index: nextIndex++, type: 'tool-call', id: e.item.call_id, name: e.item.name, arguments: '', ended: false }; blocks.set(key, b);
+      yield { type: 'block-start', index: b.index, blockType: 'tool-call' };
+      yield { type: 'tool-call-delta', index: b.index, id: b.id, name: b.name, argumentsDelta: '' };
+    } else if (e.type === 'response.function_call_arguments.delta') {
+      const b = blocks.get(`${e.output_index}:tool`); if (!b || b.ended || typeof e.delta !== 'string') throw new Error('Invalid OpenAI tool delta.');
+      b.arguments += e.delta;
+      yield { type: 'tool-call-delta', index: b.index, id: b.id, argumentsDelta: e.delta };
+    } else if (e.type === 'response.output_text.delta') {
+      const key = keyOf(e); let b = blocks.get(key);
+      if (!b) { b = { index: nextIndex++, type: 'text', text: '', ended: false }; blocks.set(key, b); yield { type: 'block-start', index: b.index, blockType: 'text' }; }
+      if (b.ended || typeof e.delta !== 'string') throw new Error('Invalid OpenAI text delta.');
+      b.text += e.delta; yield { type: 'text-delta', index: b.index, text: e.delta };
+    } else if (e.type === 'response.function_call_arguments.done' || e.type === 'response.output_text.done') {
+      const isTool = e.type === 'response.function_call_arguments.done';
+      const key = isTool ? `${e.output_index}:tool` : keyOf(e);
+      let b = blocks.get(key);
+      // Text can finish empty without any delta.
+      if (!b && !isTool && e.text === '') { b = { index: nextIndex++, type: 'text', text: '', ended: false }; blocks.set(key, b); yield { type: 'block-start', index: b.index, blockType: 'text' }; }
+      if (!b || b.ended || (isTool ? e.arguments !== b.arguments : e.text !== b.text)) throw new Error('OpenAI block completion mismatch.');
+      b.ended = true;
+      const { index, ended, ...block } = b; yield { type: 'block-end', index, block };
+    } else if (e.type === 'response.completed') {
+      if (e.response?.status !== 'completed' || [...blocks.values()].some(b => !b.ended)) throw new Error('Incomplete OpenAI output.');
+      const usage = e.response.usage;
+      if (usage) {
+        const cached = usage.input_tokens_details?.cached_tokens ?? 0;
+        if (![usage.input_tokens, usage.output_tokens, cached].every(n => Number.isInteger(n) && n >= 0) || cached > usage.input_tokens) throw new Error('Invalid OpenAI token usage.');
+        yield { type: 'usage', usage: { inputTokens: usage.input_tokens - cached, outputTokens: usage.output_tokens, cacheReadTokens: cached, totalTokens: usage.input_tokens + usage.output_tokens, ...(Number.isInteger(usage.output_tokens_details?.reasoning_tokens) ? { reasoningTokens: usage.output_tokens_details.reasoning_tokens } : {}) } };
+      }
+      completed = true; yield { type: 'finish', reason: { kind: tools ? 'tool-calls' : 'stop' } }; return;
+    } else if (e.type === 'response.failed' || e.type === 'error') {
+      const code = e.response?.error?.code ?? e.code;
+      const known = ['subscription_sharing_usage_limit_exceeded', 'subscription_sharing_usage_unavailable'];
+      throw new Error(known.includes(code) ? `ChatGPT plan unavailable (${code}). Review https://chatgpt.com/settings/usage; retrying does not reset limits.` : 'OpenAI response failed.');
+    } else if (e.type === 'response.incomplete') {
+      throw new Error('OpenAI response incomplete; partial output must not be treated as success.');
+    } else if (e.type === 'response.output_item.added' && !['message', 'reasoning'].includes(e.item?.type)) {
+      throw new Error('Unsupported OpenAI output item.');
+    } else if (e.type === 'response.refusal.delta' || e.type === 'response.refusal.done') {
+      throw new Error('OpenAI refused this response.');
+    }
+  }
+  if (!completed) throw new Error('OpenAI stream ended before response.completed.');
+}
+export async function* infer(session, options, headers = {}, fetcher) {
+  const body = requestBody(options);
+  const response = await officialFetch(`${RESOURCE}/responses`, { method: 'POST', headers: { ...headers, Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: options.signal }, fetcher);
+  if (!response.ok) throw new Error(`OpenAI inference failed (HTTP ${response.status}). No automatic paid fallback is configured.`);
+  if (!response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Expected an OpenAI event stream.');
+  yield* responseChunks(sseEvents(response.body));
+}
