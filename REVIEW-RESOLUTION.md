@@ -4,7 +4,7 @@ Reviewed 2026-11-03 against the supplied handoff, the installed DSH 0.2.1-rc.5 r
 
 | Item | Decision and implementation |
 | --- | --- |
-| B1 version gate | Confirmed. Version 0.2.0 accepts exactly the two verified DSH versions. A broad future prerelease range would claim untested compatibility. No exemption was used. |
+| B1 version gate | Confirmed, then relaxed on 2026-11-04: an installed DSH upgrade to 0.2.2-rc.1 silently dropped the plugin because the enumerated gate did not list it. The manifest now accepts `>=0.2.1-rc.5 <0.3.0`; the adapter API is verified on 0.2.1-rc.5, 0.2.2-alpha.3 and 0.2.2-rc.1, and another 0.2.x runtime activates with an unverified-runtime log warning instead of being skipped. No exemption is used. |
 | B2 GUI activation | Confirmed. Vault loading is lazy; activation registers the provider without a passphrase. Added strictly validated optional passphrase-file/vault/context settings and owner-only file loading. |
 | H1 credential contention | Confirmed. Read-only snapshots, change-only writes, bounded state-lock waiting, stable login identity and cross-process refresh serialization added. The suggested unlocked refresh followed by CAS alone could still consume a rotating token twice: a separate refresh mutex prevents that race while keeping network I/O outside the state lock. Logout clears local credentials before remote I/O; discarded rotated credentials are revoked best-effort. |
 | H2 long streams | Confirmed. Responses follows caller cancellation without an internal total deadline; administrative endpoints remain bounded. |

@@ -7,10 +7,11 @@
   "license": "MIT",
   "engines": {
     "node": ">=22",
-    "dsh": "0.2.1-rc.5 || 0.2.2-alpha.3"
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0"
   },
   "exports": {
     ".": "./src/index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
@@ -19,6 +20,7 @@
   },
   "files": [
     "src",
+    "client.js",
     "locale",
     "icon.svg",
     "cordis.patch.yml",
@@ -29,14 +31,20 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/auth.js && node --check src/vault.js && node --check src/protocol.js && node --check src/cli.js && node --check src/adapter.js && node --check src/images.js && node --check src/replay.js && node --check src/errors.js"
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/vault.js && node --check src/protocol.js && node --check src/cli.js && node --check src/adapter.js && node --check src/images.js && node --check src/replay.js && node --check src/errors.js && node --check src/compat.js && node --check client.js"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.5 || 0.2.2-alpha.3"
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.5 <0.3.0-0",
+    "@deepseek-ai/schemastery": "~3.18.5"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
     }
   },
   "overrides": {

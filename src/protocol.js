@@ -4,12 +4,29 @@ import { saveReplay, readReplay } from './replay.js';
 import { LlmError } from '@deepseek-ai/dsh-llm';
 import { httpError, providerError } from './errors.js';
 
+const WIRE_REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const REASONING_EFFORT_NAMES = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+/** Map the account catalog's reasoning levels to the selectable DSH metadata. */
+export function reasoningInfo(model) {
+  const levels = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+  const efforts = [];
+  for (const level of levels) {
+    const id = level?.effort;
+    // The catalog can advertise levels this public route rejects (for example
+    // `ultra` returns HTTP 400), so expose only wire-accepted effort values.
+    if (typeof id !== 'string' || !WIRE_REASONING_EFFORTS.has(id) || efforts.some(e => e.id === id)) continue;
+    efforts.push({ id, name: REASONING_EFFORT_NAMES[id] ?? id, ...(typeof level.description === 'string' && level.description.trim() ? { description: level.description.trim() } : {}) });
+  }
+  if (efforts.length === 0) return {};
+  const defaultEffort = typeof model.default_reasoning_level === 'string' && efforts.some(e => e.id === model.default_reasoning_level) ? model.default_reasoning_level : undefined;
+  return { reasoning: { efforts, ...(defaultEffort === undefined ? {} : { defaultEffort }) } };
+}
 export async function listModels(session, headers = {}, signal, fetcher) {
   const response = await officialFetch(`${RESOURCE}/models`, { headers: { ...headers, Authorization: `Bearer ${session.accessToken}` }, signal }, fetcher);
   if (!response.ok) throw await httpError(response);
   const body = await response.json();
   if (!Array.isArray(body.models)) throw new Error('Unexpected ChatGPT model catalog.');
-  return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug.length > 0).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug, ...(Number.isSafeInteger(m.context_window) && m.context_window > 0 ? { contextWindow: m.context_window } : {}), ...(Array.isArray(m.input_modalities) && m.input_modalities.includes('text') ? { inputModalities: ['text', ...(m.input_modalities.includes('image') ? ['image'] : [])] } : {}) }));
+  return body.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug.length > 0).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug, ...(Number.isSafeInteger(m.context_window) && m.context_window > 0 ? { contextWindow: m.context_window } : {}), ...(Array.isArray(m.input_modalities) && m.input_modalities.includes('text') ? { inputModalities: ['text', ...(m.input_modalities.includes('image') ? ['image'] : [])] } : {}), ...reasoningInfo(m) }));
 }
 export function requestBody(options, versions = new Map(), features = {}) {
   if (options.stop?.length) throw new Error('Stop sequences are not supported by this Responses adapter.');
@@ -76,11 +93,18 @@ export async function* responseChunks(events, features = {}) {
   const blocks = new Map(); let nextIndex = 0, tools = false, completed = false;
   const emitted = [];
   const nativeItems = new Map();
+  const citations = new Map();
   const keyOf = e => `${e.output_index}:${e.content_index ?? 0}`;
   for await (const e of events) {
     if (e.type === 'response.output_item.done') {
       if (!['message','function_call','reasoning', ...(features.webSearch ? ['web_search_call'] : [])].includes(e.item?.type)) throw new Error('Unsupported OpenAI output item.');
       nativeItems.set(e.output_index, e.item);
+    }
+    // Hosted web search delivers citations as dedicated events, and this gateway
+    // leaves response.completed.output empty, so collect them as they arrive.
+    if (e.type === 'response.output_text.annotation.added' && e.annotation?.type === 'url_citation' && typeof e.annotation.url === 'string') {
+      let url; try { url = new URL(e.annotation.url); } catch { url = undefined; }
+      if (url !== undefined && ['https:','http:'].includes(url.protocol) && !citations.has(url.href)) citations.set(url.href, typeof e.annotation.title === 'string' ? e.annotation.title.replace(/[\[\]\r\n]/g,' ') : url.hostname);
     }
     if (e.type === 'response.output_item.added' && e.item?.type === 'function_call') {
       const key = `${e.output_index}:tool`;
@@ -112,7 +136,7 @@ export async function* responseChunks(events, features = {}) {
       const output = e.response.output ?? [...nativeItems].sort(([a],[b]) => a-b).map(([,item]) => item);
       const streamedBlocks = emitted.slice().sort((a,b)=>a.index-b.index).map(e=>e.block);
       if (features.webSearch) {
-        const links = new Map();
+        const links = new Map(citations);
         for (const item of output) for (const content of item.content ?? []) for (const a of content.annotations ?? []) {
           if (a.type !== 'url_citation' || typeof a.url !== 'string') continue;
           let url; try { url = new URL(a.url); } catch { continue; }
@@ -153,6 +177,10 @@ export async function* infer(session, options, headers = {}, fetcher, features =
   const body = requestBody(options, versions, { ...features, replay });
   const response = await officialFetch(`${RESOURCE}/responses`, { method: 'POST', headers: { ...headers, Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: options.signal }, fetcher);
   if (!response.ok) throw await httpError(response);
-  if (!response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Expected an OpenAI event stream.');
+  // The ChatGPT-plan gateway streams `event:`/`data:` SSE frames without a
+  // Content-Type header (verified against a real account), so only reject a
+  // response that explicitly declares a non-SSE type.
+  const contentType = response.headers.get('content-type');
+  if (contentType !== null && !contentType.includes('text/event-stream')) throw new Error('Expected an OpenAI event stream.');
   yield* responseChunks(sseEvents(response.body), { ...features, replay });
 }

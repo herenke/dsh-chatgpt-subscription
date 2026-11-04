@@ -4,11 +4,11 @@
 
 Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** flow while keeping DeepSeek Harness's agent loop. Inference uses the public Responses API. This is an independent project, not an official OpenAI or DeepSeek plugin. It does not read existing Codex/ChatGPT credentials or use private `backend-api` endpoints.
 
-**Status: local development preview.** Offline security/protocol tests and mocked requests through the actual DSH LLM runtime have passed. The installed macOS DSH CLI has also loaded both the local directory and packed artifact using isolated profiles. Real account sign-in, subscription usage, installation into a user's normal DSH profile, and desktop rendering have not been tested. These results do not establish account eligibility or production readiness.
+**Status: available for use; verified with a real ChatGPT account on macOS (updated 2026-11-04).** The plugin is configured in DSH Desktop and the user has confirmed active conversation use. Official sign-in, account-scoped model discovery, streaming text, a function-tool round trip with reasoning replay, image input, token refresh, reasoning effort selection, and optional hosted web search have been exercised against a real account. Settings → Models includes an enable/disable card. Windows/Linux behavior remains unverified; account eligibility, model availability and plan limits still vary by account and OpenAI policy. See [VALIDATION.md](VALIDATION.md) for the tested scope and remaining verification limits.
 
 ## Supported scope
 
-- Node.js 22+ and DSH **0.2.1-rc.5** or **0.2.2-alpha.3**. Only these verified versions satisfy the compatibility gate.
+- Node.js 22+ and any DSH **0.2.x** (`>=0.2.1-rc.5 <0.3.0`). The adapter API has been verified on 0.2.1-rc.5, 0.2.2-alpha.3 and 0.2.2-rc.1; another 0.2.x runtime still activates but logs an unverified-runtime warning instead of dropping the plugin.
 - Account-specific model discovery instead of hardcoded models; text conversations, function tool calls/results, streaming text, and token usage.
 - Multiple account/workspace registrations, account selection, reauthorization, refresh, sign-out, and renewable-session revocation.
 - Authorization Code with PKCE S256, fresh state/nonce, JWKS RS256 signature verification, and issuer/audience/expiry/nonce/subject checks.
@@ -22,6 +22,8 @@ Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** 
 | Text and local function tools | Supported, with tools grouped under the `dsh` namespace. |
 | Image input | Supported for user attachments and function-tool results through DSH's attachment service. |
 | Native reasoning replay | Successful native output, including encrypted reasoning, is reused only for the same account, provider, model, and unchanged visible content. |
+| Reasoning effort | Selectable per model from the account catalog's `supported_reasoning_levels`, with the model's catalog default preselected. Only levels this route accepts are offered; the catalog-advertised `ultra` level is filtered out because the route rejects it. |
+| Enable/disable switch | A card at the bottom of **Settings → Models** toggles this provider without a restart: disabling unregisters the adapter, so the chat model picker stops loading it (useful when `api.openai.com` is unreachable). The choice persists in the plugin row's volatile `enabled` field. |
 | OpenAI web search | Optional via `webSearch: true`; availability remains subject to model/account/workspace policy. |
 | Audio/video input and transcription | Unavailable on the documented ChatGPT plan route. |
 | Other hosted tools | Image generation, file search, Code Interpreter, native computer use, hosted MCP/connectors, and `tool_search` are excluded by the documented route. Local DSH tools remain separate. |
@@ -34,7 +36,7 @@ Images use normalized PNG/JPEG/WebP/non-animated GIF attachments, encoded as inl
 
 If the account catalog explicitly declares text-only input, DSH substitutes image placeholders. When the catalog omits modality metadata, the adapter leaves capability unknown and permits image submission; the selected model/API determines whether it is accepted. No model is assumed to support vision merely because it appears in the picker.
 
-Encrypted reasoning remains opaque; the plugin does not decode it or fabricate hidden reasoning from visible text. Changed or compacted history falls back to visible text/tool history. Native replay is stored in the DSH session log, separately from the encrypted OAuth vault. Real subscription requests and long-running tool loops still need live validation.
+Encrypted reasoning remains opaque; the plugin does not decode it or fabricate hidden reasoning from visible text. Changed or compacted history falls back to visible text/tool history. Native replay is stored in the DSH session log, separately from the encrypted OAuth vault. Long-running tool loops and account-specific limits still need live validation.
 
 ## Development checks
 
@@ -100,6 +102,7 @@ Optional fields in the existing plugin row:
 
 ```yaml
 config:
+  enabled: true
   passphraseFile: ~/.config/dsh-chatgpt-subscription/passphrase
   vaultPath: ~/.config/dsh-chatgpt-subscription/accounts.vault
   contextWindow: 32768
@@ -110,6 +113,10 @@ config:
 Use the model's actual supported capacity when setting these example values. Capacity precedence is per-model override → configured global default → catalog `context_window` → **32768-token estimate**. The fallback is a conservative budget, not a provider capacity guarantee. Model descriptions identify its source. DSH receives the context budget for automatic compaction; context-overflow responses use its recoverable error code. No output-token cap is promised.
 
 The model catalog is cached for 60 seconds with shared in-flight discovery, invalidated by account/session/token changes. Ordinary credential reads do not write or lock the vault. Refreshes serialize across processes under a separate refresh lock; network I/O does not hold the state-write lock. Contended locks wait up to 130 seconds and are never automatically stolen. Streaming inference has no internal total deadline and follows DSH's cancellation signal; model metadata has a 30-second deadline, and token/revocation/JWKS requests have a 120-second deadline. An incomplete response reports a reason and is never treated as a completed tool call.
+
+## Enable or disable the provider (Settings → Models)
+
+Open **Settings → Models**: the page ends with a **ChatGPT subscription** card whose switch registers or unregisters the provider live. Disable it when `api.openai.com` is unreachable (for example before starting the proxy), and the conversation model picker will no longer query or show this provider; enable it again after the proxy is up. A session already using one of these models must pick another model after disabling. The switch writes the plugin row's volatile `enabled` field through the DSH settings document, so no restart is needed. The same value can be set in `cordis.patch.yml` as `config.enabled`.
 
 ## Optional web search
 

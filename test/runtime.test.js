@@ -50,7 +50,7 @@ test('runtime reports stream failures as terminal error and no retry policy', as
 
 test('plugin namespace activates and disposes its provider using real Cordis effects', async () => {
   const plugin = await import('../src/index.js');
-  assert.deepEqual(Object.keys(plugin).sort(), ['apply', 'inject', 'name']);
+  assert.deepEqual(Object.keys(plugin).sort(), ['Config', 'apply', 'inject', 'name']);
   const before = process.env.DSH_CHATGPT_VAULT_PASSWORD;
   process.env.DSH_CHATGPT_VAULT_PASSWORD = 'synthetic-test-password-only';
   const ctx = new Context(); await ctx.plugin(LlmRuntime);
