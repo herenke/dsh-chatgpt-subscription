@@ -2,149 +2,181 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** flow while keeping DeepSeek Harness's agent loop. Inference uses the public Responses API. This is an independent project, not an official OpenAI or DeepSeek plugin. It does not read existing Codex/ChatGPT credentials or use private `backend-api` endpoints.
+Use your ChatGPT subscription in [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) through OpenAI's official **Sign in with ChatGPT** flow. Keep DSH's agent loop, local tools, and conversation history while sending inference requests to the public Responses API.
 
-**Status: available for use; verified with a real ChatGPT account on macOS (updated 2026-11-04).** The plugin is configured in DSH Desktop and the user has confirmed active conversation use. Official sign-in, account-scoped model discovery, streaming text, a function-tool round trip with reasoning replay, image input, token refresh, reasoning effort selection, and optional hosted web search have been exercised against a real account. Settings → Models includes an enable/disable card. Windows/Linux behavior remains unverified; account eligibility, model availability and plan limits still vary by account and OpenAI policy. See [VALIDATION.md](VALIDATION.md) for the tested scope and remaining verification limits.
+This is an independent community project, not an official OpenAI or DeepSeek plugin. It does not read existing ChatGPT/Codex credentials or use private `backend-api` endpoints. Access requires an eligible account and remains subject to OpenAI's model availability, usage limits, and [subscription-route restrictions](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 
-## Supported scope
+## Features
 
-- Node.js 22+ and any DSH **0.2.x** (`>=0.2.1-rc.5 <0.3.0`). The adapter API has been verified on 0.2.1-rc.5, 0.2.2-alpha.3 and 0.2.2-rc.1; another 0.2.x runtime still activates but logs an unverified-runtime warning instead of dropping the plugin.
-- Account-specific model discovery instead of hardcoded models; text conversations, function tool calls/results, streaming text, and token usage.
-- Multiple account/workspace registrations, account selection, reauthorization, refresh, sign-out, and renewable-session revocation.
-- Authorization Code with PKCE S256, fresh state/nonce, JWKS RS256 signature verification, and issuer/audience/expiry/nonce/subject checks.
-- AES-256-GCM encrypted credentials with a scrypt-derived key, owner-only Unix modes (0700 directory, 0600 file), atomic replacement, and a cross-process lock.
-- Fixed official HTTPS endpoints; no HTTP, custom gateways, redirects, telemetry, automatic paid fallback, or automatic inference retries.
+- Account-scoped model discovery, streaming responses, and token usage reporting.
+- Local function tools and account/model-scoped native reasoning replay.
+- Image input through DSH's attachment service.
+- Per-model reasoning effort selection from the account catalog.
+- Optional OpenAI-hosted web search with source links.
+- Multiple account/workspace registrations, account selection, token refresh, and sign-out.
+- A persistent enable/disable switch in **Settings → Models**.
+- Encrypted local credentials; no API key or separate paid-API fallback.
 
-### Capability status
+## Requirements
 
-| Capability | Current behavior |
-| --- | --- |
-| Text and local function tools | Supported, with tools grouped under the `dsh` namespace. |
-| Image input | Supported for user attachments and function-tool results through DSH's attachment service. |
-| Native reasoning replay | Successful native output, including encrypted reasoning, is reused only for the same account, provider, model, and unchanged visible content. |
-| Reasoning effort | Selectable per model from the account catalog's `supported_reasoning_levels`, with the model's catalog default preselected. Only levels this route accepts are offered; the catalog-advertised `ultra` level is filtered out because the route rejects it. |
-| Enable/disable switch | A card at the bottom of **Settings → Models** toggles this provider without a restart: disabling unregisters the adapter, so the chat model picker stops loading it (useful when `api.openai.com` is unreachable). The choice persists in the plugin row's volatile `enabled` field. |
-| OpenAI web search | Optional via `webSearch: true`; availability remains subject to model/account/workspace policy. |
-| Audio/video input and transcription | Unavailable on the documented ChatGPT plan route. |
-| Other hosted tools | Image generation, file search, Code Interpreter, native computer use, hosted MCP/connectors, and `tool_search` are excluded by the documented route. Local DSH tools remain separate. |
-| `temperature` and `stop` | Rejected with an explicit error: this subscription route excludes temperature, and Responses has no native stop-sequence field. |
-| Output-token cap | `maxTokens` is not forwarded because this route rejects `max_output_tokens`; it is **not an enforced cap**. |
+- Node.js **22 or later** and an installed DSH CLI.
+- DSH `>=0.2.1-rc.5 <0.3.0-0`. Adapter integration has been tested with `0.2.1-rc.5`, `0.2.2-alpha.3`, and `0.2.2-rc.1`; other accepted versions log an unverified-runtime warning. The Settings card also requires the host's Models settings slot and configuration-form service.
+- An eligible ChatGPT account and a local browser for authorization.
+- Network access from the **DSH process** to `auth.openai.com` and `api.openai.com`. If a proxy or VPN is necessary in your environment, configure it before signing in or enabling the provider. This plugin does not configure a proxy.
 
-These boundaries follow the [official subscription preview restrictions](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), not the capabilities of every OpenAI model or of the separate paid API. No alternative billing endpoint is configured.
+Live-account testing has been performed on macOS. Windows/Linux integration has not been verified; Windows ACL protection is not implemented. See [Security](SECURITY.md) and [Testing](VALIDATION.md) for details.
 
-Images use normalized PNG/JPEG/WebP/non-animated GIF attachments, encoded as inline data URLs. The plugin does not download arbitrary image URLs or open user-supplied paths. The host creates a request preview with at most 4096 pixels on either side and an 8 MiB encoded-byte target per image. Requests are limited to 16 retained image occurrences and 20 MiB of base64 image data; oversized histories signal DSH's oldest-image offload mechanism. Offloaded images are represented explicitly as omitted. Host normalization may change format/dimensions, and preview resizing can reduce small-text detail. The host must provide `attachments.readImageRequest`.
+## Installation
 
-If the account catalog explicitly declares text-only input, DSH substitutes image placeholders. When the catalog omits modality metadata, the adapter leaves capability unknown and permits image submission; the selected model/API determines whether it is accepted. No model is assumed to support vision merely because it appears in the picker.
+The project is installed from source; no npm package is published.
 
-Encrypted reasoning remains opaque; the plugin does not decode it or fabricate hidden reasoning from visible text. Changed or compacted history falls back to visible text/tool history. Native replay is stored in the DSH session log, separately from the encrypted OAuth vault. Long-running tool loops and account-specific limits still need live validation.
-
-## Development checks
+### 1. Get the source
 
 ```sh
-cd ~/Projects/dsh-chatgpt-subscription
+git clone https://github.com/herenke/dsh-chatgpt-subscription.git
+cd dsh-chatgpt-subscription
 npm ci --ignore-scripts
-npm test
-npm run check
-npm audit
-npm pack --dry-run --ignore-scripts
 ```
 
-There are no install/postinstall/prepare build scripts and no additional regular runtime dependencies. The host supplies `@deepseek-ai/dsh-llm`; the lockfile reproduces the development environment. No npm package has been published. `private: true` prevents accidental npm publication.
+Keep this directory available after installation. The commands below assume your terminal is in the repository root.
 
-## Local use
+### 2. Set up credentials and sign in
 
-Real sign-in must be completed by the user. Check `dsh --version` first. If the version differs, review interface compatibility rather than bypassing the version requirement. The following reference command adds the local bundle to your web profile; alternatively, use DSH's plugin manager. Installation changes that profile. Development probes used a separate temporary `DSH_HOME`, leaving normal user profiles unchanged.
+For macOS/Linux, create a private passphrase file usable by both the CLI and GUI-launched DSH. Run this **once for a new vault**:
 
 ```sh
-# CLI/web usage:
-dsh plugin --profile web add "file:$HOME/Projects/dsh-chatgpt-subscription"
-# Desktop App: fully quit it first, install, then reopen it:
-dsh plugin --profile desktop add "file:$HOME/Projects/dsh-chatgpt-subscription"
+mkdir -p "$HOME/.config/dsh-chatgpt-subscription"
+chmod 700 "$HOME/.config/dsh-chatgpt-subscription"
+(umask 077; set -C; openssl rand -base64 32 > "$HOME/.config/dsh-chatgpt-subscription/passphrase")
+node src/cli.js login
 ```
 
-Choose the profile you actually use. After restarting, check that the provider registered; without sign-in, model discovery reports a missing-credential/sign-in error. Provider activation itself needs no passphrase and starts no authorization flow.
+The command requires OpenSSL and refuses to overwrite an existing passphrase file. If you already have a vault, keep its original passphrase; generating a new one will not unlock it. The file contains the plaintext decryption secret and is **not a system keychain**. Do not commit or share it. See [Security](SECURITY.md) for the threat model.
 
-Set a strong passphrase in the **same terminal environment** used to launch both the CLI and DSH. On macOS's default zsh, read it without echoing it or placing its literal value in shell history:
+The CLI opens the browser. Review the account, workspace, permissions, and usage limits on OpenAI's page. Credentials are saved in an encrypted vault at `~/.config/dsh-chatgpt-subscription/accounts.vault`.
 
-```zsh
-read -rs 'DSH_CHATGPT_VAULT_PASSWORD?Vault passphrase (16+ characters): '
-export DSH_CHATGPT_VAULT_PASSWORD
-printf '\n'
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js login
-# Launch DSH, with the local plugin configured, from the same terminal:
-dsh web
-```
+Alternatively, supply `DSH_CHATGPT_VAULT_PASSWORD` (at least 16 characters) through your secret-management environment to both the CLI and DSH. GUI launches usually do not inherit terminal variables. Never place a literal passphrase in shell history, repository files, DSH configuration, or an issue report.
 
-Use a long, random, unique passphrase. The 16-character check is a minimum, not a guarantee of strength. Do not put it in the repository, `.env`, profile configuration, or chat. GUI-launched DSH generally does not inherit terminal variables; use the private-file option below or launch from the configured terminal. Keep the same passphrase across launches. If it is lost, the vault cannot be decrypted; disconnect the app in ChatGPT before establishing new local credentials. Default vault: `~/.config/dsh-chatgpt-subscription/accounts.vault`.
+### 3. Install into your DSH profile
 
-The CLI opens the system browser and prompts you to **Continue with ChatGPT**. Review the account, workspace, permissions, and usage limits on OpenAI's page. The plugin does not automatically enable credits or purchases. Authorization URLs may contain an `id_token_hint` sent only to OpenAI, so they are not printed. An account becomes active only after identity verification. The issued client ID is saved before the initial code exchange so registration can be reused if the one-time code expires.
+Choose **one** command for the profile you use. Fully quit the Desktop app before installing into its profile, then reopen it:
 
 ```sh
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js accounts
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js login --new
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js login oaiapp_YOUR_SAVED_CLIENT_ID
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js select oaiapp_YOUR_SAVED_CLIENT_ID
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js logout
-node ~/Projects/dsh-chatgpt-subscription/src/cli.js usage
+# Desktop app
+dsh plugin --profile desktop add "file:$PWD"
+
+# Or CLI/web profile
+dsh plugin --profile web add "file:$PWD"
 ```
 
-`accounts` marks the active account with `*`. After switching, refresh DSH's model list and choose a model available to that account under the `ChatGPT subscription` provider. Account details appear in model descriptions and the CLI; tokens are not sent to the DSH frontend. `logout` first clears local tokens, then attempts remote revocation outside the state lock while retaining client/account mappings and the host ID. If remote revocation is unconfirmed, it tells you to disconnect the app in ChatGPT settings.
+For CLI/web, launch the same profile with `dsh --profile web web`. If you use a custom profile, replace the profile name in both commands.
 
-Eligibility, model availability, plan usage, and credits depend on OpenAI's current policy and the actual authorization grant. Access is not guaranteed for every subscription. Usage may be shared with other ChatGPT/Codex usage. Limit errors do not trigger automatic retries or a switch to API billing. Manage usage at <https://chatgpt.com/settings/usage>.
+Select a model under **ChatGPT subscription** in the conversation model picker. Activating the plugin does not open a browser or sign in automatically. An unsigned-in provider reports a credential error when its models are requested.
 
-## Desktop credentials and context settings
+## Enable or disable
 
-For GUI launches, create a private directory (0700) and a regular owner-only passphrase file (0600) outside the repository. The default file is `~/.config/dsh-chatgpt-subscription/passphrase`; put one strong passphrase on one line, optionally ending with a newline. The plugin does not create this file or generate a passphrase automatically. A file makes GUI startup practical, but stores the decryption secret on disk; it is **not a system keychain** and cannot protect against the same OS user reading both files.
+Open **Settings → Models** and find the **ChatGPT subscription** card at the bottom of the page.
 
-Passphrase precedence: plugin `config.passphraseFile`, then `DSH_CHATGPT_VAULT_PASSWORD`, then `DSH_CHATGPT_VAULT_PASSWORD_FILE`, then the default private file. An explicitly configured invalid source fails instead of silently falling back. Paths must be absolute or start with `~/`; passphrase-file symlinks are rejected. The CLI uses the same default file, or the two environment variables. If you configure custom paths for Desktop, set `DSH_CHATGPT_VAULT_PASSWORD_FILE` and `DSH_CHATGPT_VAULT_PATH` to matching paths when running the CLI. Never put a literal passphrase in DSH configuration.
+- **Enabled**: the provider is registered and its models can be loaded.
+- **Disabled**: the adapter is unregistered, so the conversation model picker no longer loads this provider. Credentials are retained; disabling is not sign-out.
 
-Optional fields in the existing plugin row:
+The switch persists and takes effect without restarting DSH. Reopen the model picker after changing it. Existing sessions using this provider must select another model before continuing while it is disabled. Disabling does not guarantee cancellation of requests already in progress.
+
+If your network requires a proxy, leave the provider disabled until the proxy is ready to avoid model-loading errors.
+
+## Account management
+
+Run these commands from the repository root:
+
+```sh
+node src/cli.js accounts
+node src/cli.js login --new
+node src/cli.js login oaiapp_YOUR_SAVED_CLIENT_ID
+node src/cli.js select oaiapp_YOUR_SAVED_CLIENT_ID
+node src/cli.js logout
+node src/cli.js logout oaiapp_YOUR_SAVED_CLIENT_ID
+node src/cli.js usage
+```
+
+`accounts` marks the active registration with `*`. `login --new` adds an account/workspace; `login CLIENT_ID` reauthorizes an existing registration. After selection, reopen the model picker and choose a model available to that account. Account identity is displayed in CLI output and model descriptions, but OAuth tokens are not sent to the DSH frontend.
+
+`logout` clears local tokens before attempting remote revocation. If revocation cannot be confirmed, disconnect the app in ChatGPT settings. Already dispatched requests are not cancelled across processes. Usage may be shared with ChatGPT/Codex; manage it at <https://chatgpt.com/settings/usage>.
+
+## Configuration
+
+Edit the `config` of the **existing** `chatgpt-subscription` plugin row; do not add a duplicate row. Use the DSH profile configuration editor or your profile's Cordis patch.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Registers the provider; editable live through Settings → Models. |
+| `webSearch` | `false` | Allows the model to use OpenAI-hosted `web_search`. |
+| `passphraseFile` | Unset | Explicit owner-only passphrase file. |
+| `vaultPath` | Unset | Custom encrypted-vault location. |
+| `contextWindow` | Unset | Global context-capacity override in tokens. |
+| `modelContextWindows` | `{}` | Context-capacity overrides keyed by model ID. |
 
 ```yaml
 config:
   enabled: true
-  passphraseFile: ~/.config/dsh-chatgpt-subscription/passphrase
-  vaultPath: ~/.config/dsh-chatgpt-subscription/accounts.vault
-  contextWindow: 32768
-  modelContextWindows:
-    YOUR_MODEL_SLUG: 32768
+  webSearch: false
+  # Optional: use these only when you need custom credential paths.
+  # passphraseFile: ~/.config/dsh-chatgpt-subscription/passphrase
+  # vaultPath: ~/.config/dsh-chatgpt-subscription/accounts.vault
 ```
 
-Use the model's actual supported capacity when setting these example values. Capacity precedence is per-model override → configured global default → catalog `context_window` → **32768-token estimate**. The fallback is a conservative budget, not a provider capacity guarantee. Model descriptions identify its source. DSH receives the context budget for automatic compaction; context-overflow responses use its recoverable error code. No output-token cap is promised.
+Only `enabled` is live-editable. Reload the plugin or restart DSH after changing other fields. Endpoints and tokens cannot be configured here.
 
-The model catalog is cached for 60 seconds with shared in-flight discovery, invalidated by account/session/token changes. Ordinary credential reads do not write or lock the vault. Refreshes serialize across processes under a separate refresh lock; network I/O does not hold the state-write lock. Contended locks wait up to 130 seconds and are never automatically stolen. Streaming inference has no internal total deadline and follows DSH's cancellation signal; model metadata has a 30-second deadline, and token/revocation/JWKS requests have a 120-second deadline. An incomplete response reports a reason and is never treated as a completed tool call.
+### Credential locations
 
-## Enable or disable the provider (Settings → Models)
+Passphrase lookup order:
 
-Open **Settings → Models**: the page ends with a **ChatGPT subscription** card whose switch registers or unregisters the provider live. Disable it when `api.openai.com` is unreachable (for example before starting the proxy), and the conversation model picker will no longer query or show this provider; enable it again after the proxy is up. A session already using one of these models must pick another model after disabling. The switch writes the plugin row's volatile `enabled` field through the DSH settings document, so no restart is needed. The same value can be set in `cordis.patch.yml` as `config.enabled`.
+1. `config.passphraseFile`
+2. `DSH_CHATGPT_VAULT_PASSWORD`
+3. `DSH_CHATGPT_VAULT_PASSWORD_FILE`
+4. `~/.config/dsh-chatgpt-subscription/passphrase`
 
-## Optional web search
+An explicitly selected invalid source fails rather than falling back. Passphrase files must contain one line of at least 16 characters; a trailing newline is permitted. On Unix, use an owner-only directory and regular file (0700/0600); symlink passphrase files are rejected.
 
-Web search is disabled by default. Set this plugin's DSH configuration to:
+Vault lookup order is `config.vaultPath` → `DSH_CHATGPT_VAULT_PATH` → the default vault path. Custom paths must be absolute or start with `~/`. The CLI does not read the plugin row: when using custom GUI paths, provide matching `DSH_CHATGPT_VAULT_PASSWORD_FILE` and `DSH_CHATGPT_VAULT_PATH` to the CLI, and avoid conflicting password environment variables.
 
-```yaml
-config:
-  webSearch: true
-```
+### Context capacity
 
-This is the `config` of the existing `chatgpt-subscription` plugin row, not a second plugin entry. It allows the model to use OpenAI-hosted `web_search` on this route. Search queries are handled by OpenAI's hosted tool and remain subject to account policy and usage limits. Returned URL citations are shown as source links. Unsupported or unavailable search fails normally; it does not switch billing routes or turn on other hosted tools. Omit the field or set it to `false` to disable it. No API URL or token can be configured here.
+Capacity precedence is `modelContextWindows[modelId]` → `contextWindow` → catalog `context_window` → a conservative **32768-token estimate**. Configure overrides only from the model's actual supported capacity. Model descriptions identify the source, and DSH uses the capacity for automatic compaction. The fallback is not a provider guarantee.
 
-## Security boundaries and dependencies
+### Web search
 
-See [SECURITY.md](SECURITY.md). Encryption protects credentials at rest; it does not protect against malware running as the same OS user, process environment/memory access, or untrusted DSH plugins. POSIX modes do not replace NTFS ACLs on Windows. Windows/Linux permission and browser behavior remain unverified; validation was performed on macOS.
+Set `webSearch: true` to allow OpenAI-hosted search. Availability depends on the selected model and account/workspace policy. Search queries are processed by OpenAI; returned URL citations appear as source links. This option does not enable other hosted tools or switch billing routes.
 
-The pinned DSH version depends on Zod 4.4.3, affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), a memory-exhaustion issue when validating oversized collections. This repository's development graph pins Zod 4.6.6 through root `overrides`; its recorded audit reported zero vulnerabilities. **Installing this plugin does not apply its overrides to the host DSH dependency graph.** Host maintainers must assess and update that dependency before production installation. This repository's audit is not an audit of the entire DSH host.
+## Limitations
 
-## Implementation references
+- Audio/video, transcription, image generation, file search, Code Interpreter, native computer use, hosted MCP/connectors, and `tool_search` are not supported on this route. DSH local tools remain separate.
+- `temperature` and nonempty `stop` sequences are rejected. `maxTokens` is not forwarded because the route rejects `max_output_tokens`; **no output-token cap is enforced by this plugin**.
+- Reasoning effort choices come from the account catalog and are filtered to values accepted by the route. No hidden reasoning is decrypted or fabricated.
+- Image input requires `attachments.readImageRequest`. The host normalizes PNG/JPEG/WebP/non-animated GIF input toward a 4096-pixel longest edge and an 8 MiB encoded-byte target per image. The adapter limits a request to 16 retained image occurrences and 20 MiB of base64 image data; oversized histories use DSH's image-offload mechanism. Resizing can reduce small-text detail.
+- Native replay is bound to the account, provider, model, and unchanged visible content. Edited or compacted history falls back to visible text/tool history. Session logs contain conversation and replay data separately from the encrypted credential vault.
+- No automatic inference retries, custom API endpoint, or automatic paid fallback is provided. Host-level retry/tool policies remain DSH's responsibility.
 
-Reviewed on 2026-11-03:
+## Troubleshooting
 
-- [Official registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
-- [Official accounts, sessions, and refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
-- [Official image inputs](https://developers.openai.com/api/docs/guides/images-vision)
-- [Official stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning)
-- [Official model discovery and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-- [OpenAI's public OIDC metadata](https://auth.openai.com/.well-known/openid-configuration)
-- DSH source snapshot [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb), particularly the interfaces in `packages/llm/llm/src`. Compatibility tests use both official npm packages `@deepseek-ai/dsh-llm@0.2.1-rc.5` and `@deepseek-ai/dsh-llm@0.2.2-alpha.3`.
+| Symptom | What to check |
+| --- | --- |
+| `OpenAI network request failed` | Ensure the DSH process can reach the official hosts; check DNS, firewall, and proxy/VPN configuration. Disable the provider while offline. |
+| Missing credentials or cannot unlock vault | Use the same vault and original passphrase in CLI and DSH; check file ownership, permissions, and path overrides. |
+| Provider missing after installation/upgrade | Check the active profile and supported DSH range, restart DSH, and inspect plugin activation logs. Do not bypass version requirements without reviewing compatibility. |
+| Account/model unavailable | Sign in, confirm plan permission, select the intended registration, then reopen the model picker. Catalog results are cached for up to 60 seconds and invalidated on account/session/token changes. |
+| `Vault busy` | Another process may be refreshing credentials. Wait; remove a stale lock only after stopping all plugin/CLI processes. See [Security](SECURITY.md). |
+| Usage limit reached | Check OpenAI's usage page. The plugin does not purchase credits or switch to paid API billing. |
 
-No source was copied from the previously reviewed community plugin. This project does not need that project's credentials or client identity. Protocol facts and interfaces come from the official sources above.
+Do not regenerate the passphrase to recover a locked vault. If the original secret is lost, disconnect the application in ChatGPT and establish new local credentials.
+
+## Development and security
+
+- [Contributing](CONTRIBUTING.md): setup, checks, and change guidelines.
+- [Testing](VALIDATION.md): automated coverage, compatibility matrix, and manual checks.
+- [Security](SECURITY.md): credential handling, trust boundaries, and reporting.
+
+Protocol references: [sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [accounts and sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions), [models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference), [image inputs](https://developers.openai.com/api/docs/guides/images-vision), and [stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning).
+
+## License
+
+[MIT](LICENSE).

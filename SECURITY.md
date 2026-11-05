@@ -1,30 +1,58 @@
-# Security model
+# Security policy
 
-This preview is a local public OAuth client, not an OAuth proxy or a hosted service. Only explicit CLI `login` opens a browser. Activating the provider does not sign in, create a registration, or read another application's credentials.
+## Reporting a vulnerability
 
-## Controls
+Do not post credentials or exploit details in a public issue. Use GitHub's **Report a vulnerability** option on this repository if it is available. If private reporting is unavailable, open a minimal issue asking the maintainer for a private contact channel, without including exploit details or sensitive material. No response-time commitment or security certification is provided.
 
-- Fresh 256-bit state, nonce and PKCE verifier per attempt. Loopback listener binds exclusively to `127.0.0.1` on an ephemeral port; exact method/path/Host checks, timeout and cancellation. Invalid state, duplicate parameters, missing code or wrong client ID do not consume the attempt. Replies are constant plain text with no HTML rendering, reflection or caching.
-- Initial dynamic registration, stable per-installation host ID, issued client ID retained per account/workspace. Reauthorization rejects client replacement and requires the validated subject to match. Identity is separate from granted plan permission; requested scope never substitutes for the actual grant.
-- RS256 only, fixed official JWKS URL, signature, issuer, audience/authorized party, expiration, issued-at, not-before and nonce verification. No JWT-supplied jku/x5u URL is fetched. JWTs and token endpoint bodies are never logged.
-- The entire credential vault, including host ID and profile mappings, is encrypted with a fresh 16-byte salt and 12-byte GCM IV on every write. Scrypt derives a 256-bit key; the authentication tag protects integrity. Key buffers are cleared after encryption/decryption. Parent app directory and vault file require owner-only Unix modes and ownership, refusing symlinks. Writes use exclusive temporary files, fsync and atomic rename.
-- Ordinary vault snapshots are read-only and rely on atomic replacement. Separate cross-process directory locks serialize short state updates and rotating-token refresh respectively. Contenders wait up to 130 seconds and respect cancellation; refresh network I/O never holds the state lock. A compare-and-swap prevents an in-flight refresh from restoring signed-out or replaced credentials. A discarded newly rotated token is revoked best-effort. The replacement token and permissions are saved together, including when a refreshed grant removes plan use. Never automatically steal a lock. Following a crash, confirm no CLI/plugin process is running before manually removing `accounts.vault.lock` or `accounts.vault.refresh.lock`.
-- Only exact official token, revocation, JWKS, public models and Responses URLs are permitted. Redirects are errors. TLS uses Node's defaults; no certificate bypass or arbitrary base URL. Model inference receives `store:false` and `stream:true`. The passphrase, OAuth state and refresh token never go to inference.
-- A successful response requires `response.completed`; failed, incomplete, disconnected, malformed or mismatched block streams cannot be successful. Tool calls preserve call IDs and raw arguments. Token counts avoid double-counting cached input. Provider policy allows zero automatic inference retries and offers no paid fallback.
-- A prepared request rechecks the active profile/token before dispatch. Local logout, a new login session or account switch invalidates an undispatched prepared request; ordinary token rotation does not. Logout clears local credentials before attempting remote revocation outside the state lock with bounded backoff; local removal is not represented as confirmed remote disconnection if revocation failed.
+Never include a vault, passphrase file, access/refresh/ID token, authorization URL, full callback URL, unredacted network trace, or token response in a report. Provide the affected commit, DSH/Node/OS versions, impact, and a reproduction using synthetic credentials where possible. Only the current repository revision is maintained; no separate security backport branches are defined.
 
-## Limits
+If credentials may be compromised, disconnect the application in ChatGPT settings, stop untrusted processes, and reauthorize only from a trusted environment. Changing the local vault passphrase alone does not revoke an exposed OAuth token.
 
-- This is not a security certification. Real browser authorization, actual token shape/rotation, subscription eligibility, live tool loops and DSH desktop rendering remain untested. Model metadata has a 30-second deadline; token/revocation/JWKS requests have a 120-second deadline and sign-in has a 180-second deadline. Responses streaming has no internal total deadline and relies on caller cancellation.
-- Environment variables and owner-only passphrase files are practical bootstrap mechanisms, not a system keychain. A passphrase file stores the decryption secret on disk alongside the encrypted vault and offers no protection against a user who can read both. Activation defers credential loading until needed; files are never generated automatically. Same-user malware, other loaded DSH code, debuggers and process/environment access can recover it or decrypted tokens. JavaScript strings and the environment cannot be reliably zeroized. Use only trusted host plugins, a strong unique passphrase and appropriate OS protection. A future keychain integration needs platform-specific review.
-- Already dispatched requests are not cancelled across processes by logout/account selection. Remote revocation can take time. A crash can leave an encrypted temporary file or lock; OAuth tokens are never written as plaintext; an explicitly user-created passphrase file does contain the plaintext decryption secret. A filesystem durability failure after a rotating refresh can still require reauthorization. The app does not guarantee directory metadata durability across sudden power loss.
-- Directory/file protection checks do not defend against malicious code already running as the same OS user or all ancestor path races. Windows ACL protection is not implemented and must be assessed before Windows use. Browser-opening commands are argument arrays without a shell; returning authorization URLs can still be visible to OS process inspection.
-- Image bytes come only from the mounted DSH attachment service, which owns digest verification and decoding/normalization. The adapter additionally checks opaque digest-shaped references, MIME signatures, dimensions, encoding metadata, byte/count budgets, and cancellation. It never opens an image path or downloads a URL. Image request targets are bounded and host offload decisions are respected.
-- Successful native replay, including opaque encrypted reasoning, is stored in the DSH session log. It contains no OAuth tokens. Replay is bound to a hashed account/client identity, provider/model, and a digest of canonical visible text/tool blocks. Native and streamed visible output must agree; edits, compaction and identity changes fall back to plain visible history. The plugin does not decrypt reasoning or use persistent server conversation IDs. Treat session logs as sensitive conversation data.
-- OpenAI-hosted web search is disabled by default and requires explicit plugin configuration. Only this hosted tool is enabled; citations permit HTTP(S) links and are escaped for Markdown. DSH local function tools use the dsh namespace. Audio/video, transcription, unsupported hosted tools, temperature and native stop sequences remain unavailable. maxTokens is omitted because this subscription route rejects max_output_tokens; no output cap is promised. DSH's own tool execution authorization and prompt-injection defenses remain the host's responsibility.
-- No real credentials were used during development. The fake keys, tokens, email addresses and generated RSA keys in tests are synthetic test fixtures, not OpenAI credentials.
-- The pinned official DSH peer has an upstream Zod memory-exhaustion advisory. The root development graph overrides Zod to 4.6.6; a host installation does not inherit that override. See README for the exact advisory and scope. No automatic `audit fix --force` or unreviewed host changes are performed.
+## Trust boundaries
 
-## Reporting
+This plugin is a local public OAuth client, not an OAuth proxy or hosted service. Explicit CLI `login` opens a browser; provider activation does not sign in, create a registration, or import another application's credentials.
 
-Keep reports private while credentials or exploit details are involved. Never attach the vault passphrase, access/refresh/ID tokens, authorization URL, full callback URL, or unredacted token response. If compromised, disconnect the application through ChatGPT Settings, then reauthorize from a trusted local environment.
+- OpenAI receives identity/authorization requests, model-discovery requests, and inference data. Inference includes conversation text, tool declarations/results, retained image data, and eligible native replay. Optional hosted web search is processed by OpenAI.
+- DSH and its loaded plugins share the local trust boundary. They may access process memory, environment variables, credentials, attachments, and conversation data. Install only trusted plugins.
+- Account identity appears in CLI output and model descriptions sent to the DSH frontend. OAuth tokens are not intentionally exposed through those surfaces.
+- Conversation and native replay data are stored in DSH session logs separately from the encrypted OAuth vault. Treat logs, exports, screenshots, and backups as sensitive.
+- `store:false` is sent for inference; it is not a guarantee about OpenAI's logging or retention policies. Review the applicable service policies before sending sensitive data.
+
+## Credential protection
+
+The vault uses AES-256-GCM with a fresh 16-byte salt and 12-byte IV per write, and a scrypt-derived 256-bit key. The encrypted payload includes tokens, account mappings, and the installation host ID. Key buffers are cleared after encryption/decryption; JavaScript strings, environment variables, and decrypted objects cannot be reliably zeroized.
+
+On Unix, the immediate vault directory and file require owner-only access (normally 0700/0600), matching ownership, and non-symlink paths. Writes use exclusive temporary files, file `fsync`, and atomic rename. Ordinary reads do not rewrite the vault. Separate cross-process locks serialize state changes and refresh-token rotation, with bounded waiting and cancellation. Refresh network I/O does not hold the state lock.
+
+Passphrase environment variables and files are bootstrap mechanisms, **not a system keychain**. A passphrase file contains the plaintext decryption secret. Anyone able to read both it and the vault can decrypt the credentials. This design does not protect against same-user malware, debuggers, process inspection, untrusted DSH code, all ancestor-path races, or compromised OS accounts. Windows ACL enforcement is not implemented.
+
+### Lock and recovery handling
+
+A process crash can leave encrypted temporary files or lock directories. Never remove a lock while another CLI/plugin process may be using the vault. Stop all such processes, confirm the exact configured vault path, and only then remove a stale `<vault-path>.lock` or `<vault-path>.refresh.lock` directory.
+
+A filesystem failure after refresh-token rotation can require reauthorization. Atomic file replacement does not guarantee directory metadata durability across power loss. Back up credentials only to protected storage; retain the matching passphrase separately according to your threat model. If the original passphrase is lost, the vault cannot be recovered by generating a new one.
+
+## Authorization and network controls
+
+- Each authorization attempt uses fresh state, nonce, and PKCE S256 material. The callback listener binds to `127.0.0.1` on an ephemeral port and validates method, path, Host, state, and callback parameters. Invalid callbacks do not consume the attempt; responses are constant plain text.
+- ID tokens use RS256 verification against the fixed official JWKS endpoint, with issuer, audience/authorized party, time, nonce, and subject checks. JWT-supplied key URLs are not fetched. Requested scopes do not substitute for actual granted permissions.
+- Only fixed official authorization, token, revocation, JWKS, models, and Responses endpoints are used. Request redirects are rejected; TLS uses Node defaults. There is no configurable API base URL or certificate bypass.
+- Passphrases and refresh tokens are not sent to inference. Token endpoint bodies and JWTs are not intentionally logged. Error diagnostics expose a stage and allowlisted code rather than arbitrary response bodies.
+- Administrative requests have bounded deadlines: model discovery 30 seconds, token/revocation/JWKS requests 120 seconds, and the browser callback wait 180 seconds. The callback wait is not a total deadline for all sign-in stages. Inference streaming relies on DSH caller cancellation rather than an internal total deadline.
+- New requests recheck the active identity. Logout clears local tokens before attempting remote revocation. Account switches, new login sessions, and local logout invalidate prepared but undispatched requests; ordinary token rotation does not. Logout, disable, and account selection do not cancel all requests already dispatched across processes. Remote revocation may fail or take time.
+
+## Model and tool data
+
+Only a completed, internally consistent response is treated as successful. Failed, incomplete, disconnected, or malformed streams do not commit successful replay or execute a partial tool call through the adapter. Inference retries and paid fallback are not implemented by this plugin; host policy remains separate.
+
+Images are read through the mounted DSH attachment service, not arbitrary paths or URLs. The host owns attachment integrity checks and decoding/normalization; the adapter checks references, supported MIME signatures, request metadata, budgets, and cancellation. Image data leaves the machine as part of an inference request.
+
+Successful native replay can include opaque encrypted reasoning and is bound to account/client identity, provider/model, and visible-content digests. The plugin does not decrypt reasoning. Edited or compacted history falls back to visible history.
+
+Hosted search is opt-in. Source links are restricted to HTTP(S) and formatted as Markdown; these links and model output are untrusted content, not an endorsement. DSH is responsible for tool authorization, prompt-injection defenses, rendering safety, and host-level execution policy. Local tools can have effects beyond the inference request.
+
+## Dependencies and verification limits
+
+The development lockfile overrides Zod to 4.6.6. The pinned development DSH dependency otherwise pulls Zod 4.4.3, affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). Installing this plugin does **not** apply root overrides to the host's dependency graph. Host maintainers must audit and update their own dependencies; a clean repository audit does not certify the DSH installation.
+
+Automated fixtures use synthetic tokens and signing keys. Live-account integration has been exercised separately on macOS without storing real credentials in the repository. Testing is not a security audit or platform certification. See [Testing](VALIDATION.md) for coverage and remaining limits.

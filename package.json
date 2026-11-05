@@ -26,6 +26,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
+    "CONTRIBUTING.md",
+    "VALIDATION.md",
     "SECURITY.md",
     "LICENSE"
   ],

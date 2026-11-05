@@ -1,68 +1,85 @@
-# Validation record
+# Testing and compatibility
 
-Date: 2026-11-03. Platform: macOS; Node.js 22.23.3.
+This document describes test coverage and reproducible checks. It is not a certification of security, platform support, account eligibility, or service availability.
 
-- `npm test`: 74 passing tests per version, 0 failures. Run separately against official `@deepseek-ai/dsh-llm@0.2.1-rc.5` and `@deepseek-ai/dsh-llm@0.2.2-alpha.3`. Includes real / Cordis activation, adapter registration, discovery, streaming and disposal with synthetic mock transports.
-- `npm run check`: all nine JavaScript runtime modules parse successfully.
-- `npm install --package-lock-only --ignore-scripts` / npm dependency audit: 0 reported vulnerabilities for this repository's locked development graph, which overrides Zod to 4.6.6. This does not certify the host DSH dependency graph; its default Zod 4.4.3 has a known upstream advisory, documented in README.
-- `npm pack --dry-run --ignore-scripts --json`: 18 runtime/package files; no test fixtures, node_modules, local credentials or development files enter the hypothetical package. No package was published.
+## Automated checks
 
-Security cases cover encrypted vault secrecy/integrity, wrong password, owner-only permissions, failed-transaction rollback, bounded lock waiting/cancellation, symlink refusal, fresh PKCE/state/nonce, reused client/host IDs, callback parameter ambiguity and identity confusion, malformed/wrong-state callbacks remaining live, constant plain-text error pages, valid-state denial, timeout/cancel, fixed endpoint and redirect policy, signed synthetic RS256 identity tokens and claim rejection, missing plan grants, rotating refresh tokens, reduced scopes, and malformed token-response redaction.
+Run from the repository root with Node.js 22+:
 
-Protocol cases cover system/developer/text/tool history translation, unsupported input rejection, account-specific catalog order/visibility, fragmented UTF-8/CRLF SSE, malformed/truncated frames, text and parallel function-call blocks, disjoint token accounting, post-delta quota failure, incomplete/disconnected streams, unsupported output refusal, public endpoint/attribution/stream/store wire flags, HTTP failures without response-body reflection, and prepared-request invalidation following account change/logout.
+```sh
+npm ci --ignore-scripts
+npm test
+npm run check
+npm audit
+npm pack --dry-run --ignore-scripts
+```
 
-Development validation performed no live OpenAI sign-in, subscription request, live refresh/revocation, full DSH desktop installation, visual metadata rendering, or production tool loop. All test credentials and generated signing keys are synthetic. That statement was superseded by the real-account verification below.
+The latest recorded run on 2026-11-04 used macOS and Node.js 22.23.3: **86 tests passed**, syntax checks and package inventory passed, and the locked development graph reported zero audit vulnerabilities. Audit results are time-dependent and do not cover the host's separately installed dependencies.
 
-The extension adds user and function-result images (ordering, normalization targets, MIME/reference validation, deduplicated reads, offload/count/base64 budgets, cancellation and missing-service errors), native replay round trips through BlockAssembler, account/model/content isolation, subscription-specific parameter/tool-namespace regression tests, opt-in web search and safe source links, and real DSH runtime image forwarding/text-only projection. Both README languages have reciprocal links and are included in the package inventory.
+### Coverage
 
-The official subscription preview restrictions were checked on 2026-11-03: audio/video/transcription and several hosted tools are excluded; temperature and max_output_tokens are not accepted. No unsupported endpoint or paid API fallback was added. Live image acceptance, encrypted reasoning continuation and hosted web search were not tested with a real ChatGPT account.
+| Area | Automated coverage |
+| --- | --- |
+| OAuth | Fresh PKCE/state/nonce; callback ambiguity, identity and claim checks; synthetic RS256 signatures; denied/cancelled/timed-out attempts; actual-grant enforcement. |
+| Vault | Encryption and integrity; wrong passphrase; ownership/permissions and symlink refusal; atomic writes; rollback; read-only access without writes; bounded locks; concurrent and cross-process refresh-token rotation. |
+| HTTP and errors | Official endpoint allowlist; redirect refusal; administrative deadlines; caller cancellation; no inference total deadline; redacted diagnostics; typed context/quota errors. |
+| Responses | Message/tool translation; fragmented SSE; absent Content-Type; explicit non-SSE rejection; parallel calls; disjoint token usage; failed/incomplete/disconnected streams. |
+| Models | Account catalog filtering/order; cache invalidation; context precedence; accepted reasoning efforts; host rejection of unsupported effort before dispatch. |
+| Images and replay | Attachment/reference validation; normalization targets and budgets; offload; real DSH runtime projection; replay binding to identity/model/content; successful replay persistence only. |
+| Web search | Opt-in request flag; citation extraction from final output and annotation events; disallowed URL schemes; no hosted-call dispatch as a local function. |
+| Plugin lifecycle | Cordis activation/disposal; credential-lazy activation; disabled startup; live registration changes on volatile updates. |
+| Client module | Models footer-slot registration, locale registration, and configuration-form lookup using a synthetic module loader. This is not a browser interaction test. |
 
-## Review follow-up
+No live OpenAI credentials are needed by the automated suite. Test keys, tokens, and identities are synthetic.
 
-The installed macOS DSH CLI reports `0.2.1-rc.5`. Local-directory and packed-tarball installation into temporary `DSH_HOME` web profiles passed without version exemptions. Actual `dsh --profile web --help` exited successfully with no plugin activation warning while vault-passphrase environment variables were removed. These checks prove host installation/activation, not successful live model discovery or GUI rendering. The temporary profiles were separate from normal Desktop/web profiles.
+## Compatibility matrix
 
-New regression cases cover 20 concurrent fresh requests without writes, 20 concurrent expired requests with one refresh, four independent Node processes consuming one rotating token, state access/logout during refresh I/O, stale-lock cancellation, unchanged ciphertext/mtime on reads, private GUI passphrase files and symlink refusal, no total inference deadline, bounded administrative calls, context-budget precedence, shared catalog discovery/token invalidation, normal token rotation versus new login identity, host-resolved retry policy, safe context/quota/incomplete errors, stage-only CLI diagnostics, and persisting a rotated credential despite caller cancellation after successful exchange. See [REVIEW-RESOLUTION.md](REVIEW-RESOLUTION.md) for reviewed suggestions and deliberate deviations.
+The manifest accepts DSH `>=0.2.1-rc.5 <0.3.0-0`. The upper bound excludes 0.3.0 prereleases. Accepted but untested adapter-package versions produce a runtime warning rather than being silently skipped.
 
-## Real-account verification (2026-11-03, macOS)
+| DSH LLM package | Recorded checks |
+| --- | --- |
+| `0.2.1-rc.5` | Locked development dependency; current 86-test suite. Local-directory and tarball installation/activation probes; live LLM runtime integration. |
+| `0.2.2-alpha.3` | Earlier 74-test suite and adapter-contract checks. The complete current suite has not been rerun on this version. |
+| `0.2.2-rc.1` | Earlier 82-test suite with Cordis 4.1.0 in a temporary dependency graph; isolated installation/activation and Desktop conversation use. The full current 86-test suite has not been rerun on this version. |
 
-Performed with a personal ChatGPT account on the installed DSH 0.2.1-rc.5 Desktop runtime. The account email and all tokens are deliberately not recorded here; no credential, vault passphrase or authorization URL was written to the repository.
+The adapter contract and the Client settings integration are separate compatibility surfaces. Client behavior also depends on `settings.models.footer`, `configForms`, and locale services. Windows/Linux permission, browser, and Desktop integration are not verified; Windows ACL enforcement is not implemented.
 
-- Sign-in: official **Sign in with ChatGPT** completed end to end via the CLI (new dynamic client registration, issued `client_id` retained, ID token verified, granted scopes include `chatgpt.tokens.use.direct`). The encrypted vault was written owner-only and contains no plaintext token or email.
-- Model discovery: 8 account-scoped models returned, each advertising `text` and `image` modalities; the catalog also returns `context_window`, which the adapter uses for compaction capacity (e.g. 272000 for the tested model rather than the conservative fallback).
-- Streaming inference: `gpt-5.6-luna` returned the requested text with `finish: stop` and disjoint token usage through the real `LlmRuntime`.
-- Tool loop: a function tool was declared, the model returned a `function_call`, and after a `function_call_output` plus the stored `replayState` the model answered using the tool result.
-- Image input: a 64x64 PNG was accepted and correctly described, with image-specific token usage.
-- **Defect found only by real-account testing:** the ChatGPT-plan gateway streams `event:`/`data:` SSE frames with **no `Content-Type` header**, so the previous strict `text/event-stream` check rejected every real inference. `src/protocol.js` now rejects only an explicitly declared non-SSE type (an explicit `application/json` error body still fails), and two regression cases cover the header-less stream and the explicit non-SSE rejection.
-- Token refresh: forcing the stored expiry to the past triggered one real refresh-token exchange. A fresh access token was issued, the **rotating refresh token and new expiry were persisted**, identity/client stayed stable, and the refreshed token listed the same 8 models. No reauthorization was needed.
-- Hosted web search (opt-in `webSearch: true`): the request carried `tools: [{ "type": "web_search" }]`, the gateway emitted `response.web_search_call.*` events, the answer contained inline citations, and no local tool-call block was produced. Real search usage showed a large cached input count.
-- **Second defect found only with a real account:** for hosted-search responses the gateway sends `response.completed.response.output` as an **empty array** and delivers citations as `response.output_text.annotation.added` events, so the previous source-list extraction added nothing. `src/protocol.js` now also collects `url_citation` annotations from those events (http/https only, unsafe schemes dropped, title sanitized), and the real run appends a `Sources:` list. One regression case covers the empty-`output` shape.
-- Reasoning effort: catalog `supported_reasoning_levels` are exposed as selectable efforts (per model, with the catalog default preselected). The catalog advertises `ultra` for some models but the real route answers HTTP 400 `invalid_value` listing `none/minimal/low/medium/high/xhigh/max`, so only route-accepted levels are offered. Real runs sent `reasoning.effort` for the selected level and showed the expected token accounting (`low` produced 0 reasoning tokens, `high` produced 10 on the same prompt); the DSH runtime rejects an unknown effort with `UNSUPPORTED_REASONING_EFFORT` before dispatch. `npm test` is 80 passing on 0.2.1-rc.5.
-- Still unverified: live revocation (would invalidate the working session), image upload through the real DSH attachment service, replay of a hosted web-search turn, long-running tool loops, and visual inspection of the desktop model picker. The Desktop app was left running with the pre-fix module loaded; a restart loads the fixed module.
+## Live integration scope
 
-## DSH 0.2.2-rc.1 upgrade (2026-11-04)
+Live-account checks on macOS during 2026-11-03–04 covered:
 
-- Upgrading the installed Desktop runtime from `0.2.1-rc.5` to `0.2.2-rc.1` made the provider disappear: `engines.dsh` enumerated only `0.2.1-rc.5` and `0.2.2-alpha.3`, so the bundle layer was skipped while the profile entry, `node_modules` link and encrypted vault stayed intact.
-- `@deepseek-ai/dsh-llm@0.2.2-rc.1` was diffed against `0.2.1-rc.5`: the only changes are the additive `LlmModelInfo.badge`, the `llm/models-updated` event and a `GenerateOptions.purpose` type relaxation. Every API this adapter uses is unchanged.
-- `engines.dsh` and the `@deepseek-ai/dsh-llm` peer now also accept `0.2.2-rc.1`. The full 80-test suite passes against `@deepseek-ai/dsh-llm@0.2.2-rc.1` with `@deepseek-ai/cordis@4.1.0` in a temporary install; the repository's pinned dev dependency stays at `0.2.1-rc.5` because the rc.1 package requires cordis 4.1.0 and changing it would re-resolve the dev graph.
-- A local-directory install into an isolated `DSH_HOME` with the `0.2.2-rc.1` CLI passed the install preflight and booted with no plugin activation warning. The same bundle then loaded in the running Desktop `desktop` profile and its row reported `fiberPhase: active`.
-- Related, not caused by this plugin: `@deepseek-ai/dsh-subagent-codex@0.2.1-rc.5` in the same profile is reported as `incompatible-version` by the new runtime and needs its own upgrade.
+- Official browser sign-in, dynamic registration, ID-token validation, encrypted credential persistence, and account-scoped model discovery.
+- Streaming text and usage through the real DSH LLM runtime.
+- One local function-tool round trip with native reasoning replay.
+- One inline PNG image request. This does not establish real DSH attachment-upload integration.
+- Refresh-token rotation and persistence, followed by model discovery without reauthorization.
+- Per-model reasoning metadata and requests with selected effort levels; filtering a catalog-advertised effort rejected by the route.
+- Opt-in hosted web search, annotation-event citations, and an appended source list.
+- Use of the configured provider for a Desktop conversation on DSH 0.2.2-rc.1.
 
-## Compatibility policy change (2026-11-04)
+Live checks found two wire-format differences now covered by regression tests: SSE responses without Content-Type, and search citations delivered as annotation events while final `output` is empty. These are compatibility observations, not guarantees for every model/account.
 
-- The manifest gate changed from an enumerated list to the verified 0.2.x range `>=0.2.1-rc.5 <0.3.0-0` (the `-0` upper bound excludes 0.3.0 prereleases). A DSH upgrade previously made the plugin disappear from the running profile without any user-visible error; a range gate keeps a newer 0.2.x runtime usable.
-- Activation still reports compatibility explicitly: `src/compat.js` resolves the loaded `@deepseek-ai/dsh-llm` package version and logs `dsh-chatgpt-subscription: @deepseek-ai/dsh-llm <version> is outside the verified set (0.2.1-rc.5, 0.2.2-alpha.3, 0.2.2-rc.1); ... behavior on this runtime is unverified.` when the runtime is outside the tested set, while verified versions stay silent. The static adapter imports fail loudly if a future runtime removes an API the plugin uses.
-- Verification: `npm test` is 82 passing on the pinned dev dependency; the same suite passes against `@deepseek-ai/dsh-llm@0.2.2-rc.1` with `@deepseek-ai/cordis@4.1.0` in a temporary graph; a local-directory install into an isolated `DSH_HOME` with the 0.2.2-rc.1 CLI passes the preflight and boots with no activation warning; the running Desktop profile keeps the plugin row `fiberPhase: active`.
+### Remaining manual checks
 
-## Provider visibility and enable/disable switch (2026-11-04)
+The following are not established by the recorded live checks:
 
-- The plugin now ships a Client half (`client.js`) that registers a card in the `settings.models.footer` slot of **Settings → Models**. The card shows the provider name, its enabled state, and a switch; it writes the plugin row's volatile `enabled` field through the DSH settings form service (`configForms.get("chatgpt-subscription").set("enabled", …)`).
-- The Host exports a Schemastery `Config` whose `enabled` field is volatile. Activation registers the adapter only while enabled, and a `loader/volatile-update` listener registers/unregisters it live, so disabling stops the chat model picker from loading the provider (for example before a proxy is running) without restarting DSH. Other fields (`webSearch`, `passphraseFile`, `vaultPath`, `contextWindow`, `modelContextWindows`) stay non-volatile load-time configuration.
-- Tests: `npm test` is 86 passing, including the Config defaults, disabled activation leaving the provider unregistered, live unregister/re-register on volatile updates, and a fake Client module loader asserting the footer card registration and its settings-entry lookup.
-- A local-directory install into an isolated `DSH_HOME` with the 0.2.2-rc.1 CLI still passes the preflight and boots with no activation warning, and `npm pack --dry-run` includes `client.js` (20 files).
-- At implementation time, the card's visual rendering and the live switch in the running Desktop app had not been verified; the bundle's new Client half required an app restart. See the subsequent user confirmation below; a complete real-UI disable/re-enable round trip remains unverified.
+- Complete GUI disable/re-enable and persistence round trip, including picker behavior while offline.
+- Live remote revocation; testing it invalidates the working session.
+- Image upload through the real DSH attachment service.
+- Replay after a hosted web-search turn.
+- Long-running tool loops, actual context compaction/overflow recovery, and quota recovery under real account limits.
+- Cross-platform integration and sustained or production-scale reliability.
 
-## User confirmation and availability status (2026-11-04)
+## Integration checklist
 
-- The user confirmed that the GPT subscription was configured and was being used for the current conversation in DSH Desktop. The session runtime also identifies the active provider/model as `chatgpt-subscription/gpt-6.1-sol`.
-- The bilingual README status is now **available for use**, replacing the obsolete local-preview label. This is confirmation of real Desktop conversation use, not a claim of npm publication, verification on Windows/Linux, or exhaustive production certification.
-- Remaining limits above still apply: live revocation, real attachment-service upload, hosted-search replay, long-running tool loops, and a complete real-UI enable/disable round trip have not been independently verified.
+For a release or compatibility change:
+
+1. Run the automated checks from a clean dependency install.
+2. Test installation from a local directory and a packed artifact in an isolated `DSH_HOME`/profile. Check activation without a credential environment; activation should not require sign-in.
+3. Verify that the intended runtime resolves its own peer dependencies, not an accidental development copy.
+4. With an authorized test account, sign in and confirm the model list, streaming text, local tool round trip, and selected reasoning effort.
+5. Open Settings → Models. Disable the provider, reopen the picker, and confirm it does not load the provider. Re-enable, verify persistence after restart, and restore the original state.
+6. Test optional image/search paths only when relevant. Record which paths actually used host services and which used injected fixtures.
+7. Review the package inventory and sanitize any evidence before sharing it.
+
+Use only an account authorized for testing. Live requests may consume subscription usage. Do not commit credentials, passphrases, account identifiers, or unredacted authorization/network traces.
