@@ -8,7 +8,7 @@ Use an eligible ChatGPT plan through OpenAI's official **Sign in with ChatGPT** 
 
 ## Supported scope
 
-- Node.js 22+ and DSH **0.2.1-rc.5** or **0.2.2-alpha.3**. Only these verified versions satisfy the compatibility gate.
+- Node.js 22+ and DSH **0.2.1-rc.5**, **0.2.2-alpha.3**, or **0.2.2-rc.1**. Only these verified versions satisfy the compatibility gate. (0.2.2-rc.1 was added by a local fork: the upstream 0.2.2-rc.1 LLM package only adds an optional model `badge` and widens `GenerateOptions.purpose`; the adapter surface used here is unchanged.)
 - Account-specific model discovery instead of hardcoded models; text conversations, function tool calls/results, streaming text, and token usage.
 - Multiple account/workspace registrations, account selection, reauthorization, refresh, sign-out, and renewable-session revocation.
 - Authorization Code with PKCE S256, fresh state/nonce, JWKS RS256 signature verification, and issuer/audience/expiry/nonce/subject checks.
@@ -138,6 +138,6 @@ Reviewed on 2026-11-03:
 - [Official stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning)
 - [Official model discovery and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 - [OpenAI's public OIDC metadata](https://auth.openai.com/.well-known/openid-configuration)
-- DSH source snapshot [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb), particularly the interfaces in `packages/llm/llm/src`. Compatibility tests use both official npm packages `@deepseek-ai/dsh-llm@0.2.1-rc.5` and `@deepseek-ai/dsh-llm@0.2.2-alpha.3`.
+- DSH source snapshot [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb), particularly the interfaces in `packages/llm/llm/src`. Compatibility tests use the official npm packages `@deepseek-ai/dsh-llm@0.2.1-rc.5`, `@deepseek-ai/dsh-llm@0.2.2-alpha.3`, and (locally) `@deepseek-ai/dsh-llm@0.2.2-rc.1`.
 
 No source was copied from the previously reviewed community plugin. This project does not need that project's credentials or client identity. Protocol facts and interfaces come from the official sources above.
