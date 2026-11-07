@@ -8,7 +8,7 @@
 
 ## 支持范围
 
-- Node.js 22+；DSH **0.2.1-rc.5** 或 **0.2.2-alpha.3**；版本门禁只放行已验证的这两个版本。
+- Node.js 22+；DSH **0.2.1-rc.5**、**0.2.2-alpha.3** 或 **0.2.2-rc.1**；版本门禁只放行已验证的这三个版本（0.2.2-rc.1 由本地分支加入：该版本 LLM 包仅新增可选的模型 `badge` 并放宽 `GenerateOptions.purpose`，本插件使用的适配器接口未变）。
 - 按账号获取模型目录，不硬编码模型；文本对话、函数工具调用、工具结果、流式文本与用量统计。
 - 多个账号/工作区注册、选择、重新授权、刷新、登出与会话撤销。
 - 授权码 + PKCE S256、随机 state/nonce、JWKS RS256 验签、issuer/audience/expiry/nonce/subject 校验。
@@ -138,6 +138,6 @@ DSH 的固定版本依赖 Zod 4.4.3，命中 [GHSA-mrhx-c7xc-m3w5](https://githu
 - [官方无状态 reasoning](https://developers.openai.com/api/docs/guides/reasoning)
 - [官方模型发现与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 - [OpenAI OIDC 公共元数据](https://auth.openai.com/.well-known/openid-configuration)
-- DSH 官方源码快照 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb)，重点核对 `packages/llm/llm/src` 接口；兼容测试分别使用 npm 官方包 `@deepseek-ai/dsh-llm@0.2.1-rc.5` 和 `@deepseek-ai/dsh-llm@0.2.2-alpha.3`。
+- DSH 官方源码快照 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/tree/8bd073392eef6f54e921a093b95076248eb08cbb)，重点核对 `packages/llm/llm/src` 接口；兼容测试使用 npm 官方包 `@deepseek-ai/dsh-llm@0.2.1-rc.5`、`@deepseek-ai/dsh-llm@0.2.2-alpha.3`，以及本地补充的 `@deepseek-ai/dsh-llm@0.2.2-rc.1`。
 
 该项目未复制此前审查的社区插件源码，不需要该社区项目的凭据或客户端身份。协议事实和接口来自上述官方来源。

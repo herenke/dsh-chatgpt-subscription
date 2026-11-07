@@ -21,4 +21,14 @@ The official subscription preview restrictions were checked on 2026-11-03: audio
 
 The installed macOS DSH CLI reports `0.2.1-rc.5`. Local-directory and packed-tarball installation into temporary `DSH_HOME` web profiles passed without version exemptions. Actual `dsh --profile web --help` exited successfully with no plugin activation warning while vault-passphrase environment variables were removed. These checks prove host installation/activation, not successful live model discovery or GUI rendering. The temporary profiles were separate from normal Desktop/web profiles.
 
+## Local follow-up: DSH 0.2.2-rc.1 on Windows
+
+Date: 2026-11-06. Platform: Windows 11; Node.js 24.16.0 (host DSH 0.2.2-rc.1, bundled Node 24.21.0).
+
+- Version gate: `engines.dsh` and the `@deepseek-ai/dsh-llm` peer range now include `0.2.2-rc.1`, so installation into the desktop profile no longer needs a version exemption. Package version bumped to 0.2.1 to distinguish this local fork.
+- API surface: `@deepseek-ai/dsh-llm@0.2.2-rc.1` differs from 0.2.1-rc.5 only by an optional `LlmModelBadge` on discovered models, a widened `GenerateOptions.purpose`, and a new `llm/models-updated` event. `LlmAdapter`, `LlmError`, `isContextWindowExceededError`, `attributionHeaders`, `resolveRetryPolicy` and the image offload helpers are unchanged.
+- `npm test` against 0.2.2-rc.1: 74 tests, 70 pass, 4 fail; against 0.2.1-rc.5 on the same machine: the same 74/70/4 result. The four failures are Windows-only POSIX expectations (owner-only `0700`/`0600` modes and unprivileged `symlink` creation returning `EPERM`), not version regressions. The 20-concurrent-expired-session case was observed to fail once on Windows timing and pass on rerun.
+- `npm run check`: passes for all nine modules.
+- Not performed: live ChatGPT sign-in, real subscription inference, and desktop GUI rendering.
+
 New regression cases cover 20 concurrent fresh requests without writes, 20 concurrent expired requests with one refresh, four independent Node processes consuming one rotating token, state access/logout during refresh I/O, stale-lock cancellation, unchanged ciphertext/mtime on reads, private GUI passphrase files and symlink refusal, no total inference deadline, bounded administrative calls, context-budget precedence, shared catalog discovery/token invalidation, normal token rotation versus new login identity, host-resolved retry policy, safe context/quota/incomplete errors, stage-only CLI diagnostics, and persisting a rotated credential despite caller cancellation after successful exchange. See [REVIEW-RESOLUTION.md](REVIEW-RESOLUTION.md) for reviewed suggestions and deliberate deviations.
