@@ -41,7 +41,7 @@ The manifest accepts DSH `>=0.2.1-rc.5 <0.3.0-0`. The upper bound excludes 0.3.0
 | --- | --- |
 | `0.2.1-rc.5` | Locked development dependency; current 93-test suite. Local-directory and tarball installation/activation probes; live LLM runtime integration. |
 | `0.2.2-alpha.3` | Earlier 74-test suite and adapter-contract checks. The complete current suite has not been rerun on this version. |
-| `0.2.2-rc.1` | Earlier 82-test suite with Cordis 4.1.0 in a temporary dependency graph; isolated installation/activation and Desktop conversation use. The full current 93-test suite has not been rerun on this version. |
+| `0.2.2-rc.1` | Earlier 82-test suite with Cordis 4.1.0 in a temporary dependency graph; isolated installation/activation and Desktop conversation use. A Windows 11 run on 2026-11-06 (host DSH 0.2.2-rc.1, Node.js 24.16.0) reported 70 of 74 tests passing, with the same four POSIX-only failures as the 0.2.1-rc.5 baseline on that machine. The full current 93-test suite has not been rerun on this version. |
 
 The adapter contract and the Client settings integration are separate compatibility surfaces. Client behavior also depends on `settings.models.footer`, `configForms`, and locale services. Windows/Linux permission, browser, and Desktop integration are not verified; Windows ACL enforcement is not implemented.
 

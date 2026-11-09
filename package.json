@@ -1,6 +1,6 @@
 {
   "name": "dsh-chatgpt-subscription",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Local ChatGPT plan provider for DeepSeek Harness using official Sign in with ChatGPT",
   "type": "module",
