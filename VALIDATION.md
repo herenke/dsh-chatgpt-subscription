@@ -14,7 +14,7 @@ npm audit
 npm pack --dry-run --ignore-scripts
 ```
 
-The latest recorded run on 2026-11-04 used macOS and Node.js 22.23.3: **86 tests passed**, syntax checks and package inventory passed, and the locked development graph reported zero audit vulnerabilities. Audit results are time-dependent and do not cover the host's separately installed dependencies.
+The latest recorded run on 2026-11-09 used macOS and Node.js 22.23.3: **93 tests passed**, syntax checks and package inventory passed, and the locked development graph reported zero audit vulnerabilities. Audit results are time-dependent and do not cover the host's separately installed dependencies.
 
 ### Coverage
 
@@ -23,8 +23,9 @@ The latest recorded run on 2026-11-04 used macOS and Node.js 22.23.3: **86 tests
 | OAuth | Fresh PKCE/state/nonce; callback ambiguity, identity and claim checks; synthetic RS256 signatures; denied/cancelled/timed-out attempts; actual-grant enforcement. |
 | Vault | Encryption and integrity; wrong passphrase; ownership/permissions and symlink refusal; atomic writes; rollback; read-only access without writes; bounded locks; concurrent and cross-process refresh-token rotation. |
 | HTTP and errors | Official endpoint allowlist; redirect refusal; administrative deadlines; caller cancellation; no inference total deadline; redacted diagnostics; typed context/quota errors. |
-| Responses | Message/tool translation; fragmented SSE; absent Content-Type; explicit non-SSE rejection; parallel calls; disjoint token usage; failed/incomplete/disconnected streams. |
+| Responses | Message/tool translation; fragmented SSE; absent Content-Type; explicit non-SSE rejection; parallel calls; disjoint token usage; failed/incomplete/disconnected streams; text and tool arguments delivered only in the `done` event, while non-extending or repeated completions still fail closed. |
 | Models | Account catalog filtering/order; cache invalidation; context precedence; accepted reasoning efforts; host rejection of unsupported effort before dispatch. |
+| Prompt cache | Opaque session identity derived from the DSH session, stable across a session, distinct for auxiliary calls, and omitted when the caller supplies none; forwarded through the real runtime. |
 | Images and replay | Attachment/reference validation; normalization targets and budgets; offload; real DSH runtime projection; replay binding to identity/model/content; successful replay persistence only. |
 | Web search | Opt-in request flag; citation extraction from final output and annotation events; disallowed URL schemes; no hosted-call dispatch as a local function. |
 | Plugin lifecycle | Cordis activation/disposal; credential-lazy activation; disabled startup; live registration changes on volatile updates. |
@@ -38,9 +39,9 @@ The manifest accepts DSH `>=0.2.1-rc.5 <0.3.0-0`. The upper bound excludes 0.3.0
 
 | DSH LLM package | Recorded checks |
 | --- | --- |
-| `0.2.1-rc.5` | Locked development dependency; current 86-test suite. Local-directory and tarball installation/activation probes; live LLM runtime integration. |
+| `0.2.1-rc.5` | Locked development dependency; current 93-test suite. Local-directory and tarball installation/activation probes; live LLM runtime integration. |
 | `0.2.2-alpha.3` | Earlier 74-test suite and adapter-contract checks. The complete current suite has not been rerun on this version. |
-| `0.2.2-rc.1` | Earlier 82-test suite with Cordis 4.1.0 in a temporary dependency graph; isolated installation/activation and Desktop conversation use. The full current 86-test suite has not been rerun on this version. |
+| `0.2.2-rc.1` | Earlier 82-test suite with Cordis 4.1.0 in a temporary dependency graph; isolated installation/activation and Desktop conversation use. The full current 93-test suite has not been rerun on this version. |
 
 The adapter contract and the Client settings integration are separate compatibility surfaces. Client behavior also depends on `settings.models.footer`, `configForms`, and locale services. Windows/Linux permission, browser, and Desktop integration are not verified; Windows ACL enforcement is not implemented.
 
@@ -55,6 +56,7 @@ Live-account checks on macOS during 2026-11-03–04 covered:
 - Refresh-token rotation and persistence, followed by model discovery without reauthorization.
 - Per-model reasoning metadata and requests with selected effort levels; filtering a catalog-advertised effort rejected by the route.
 - Opt-in hosted web search, annotation-event citations, and an appended source list.
+- Wire-level cache behavior: identical requests without a conversation identity reuse no cached prefix, while a stable `session_id` reuses about 99% of it; this is why the adapter now forwards the DSH session identity. Cached-token accounting itself is read from the streamed usage.
 - Use of the configured provider for a Desktop conversation on DSH 0.2.2-rc.1.
 
 Live checks found two wire-format differences now covered by regression tests: SSE responses without Content-Type, and search citations delivered as annotation events while final `output` is empty. These are compatibility observations, not guarantees for every model/account.

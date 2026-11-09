@@ -48,6 +48,30 @@ test('runtime reports stream failures as terminal error and no retry policy', as
   } finally { await ctx.fiber.dispose(); }
 });
 
+test('runtime forwards the DSH session identity as a stable cache session header', async () => {
+  const ctx = new Context(); await ctx.plugin(LlmRuntime);
+  try {
+    const { adapter, requests } = fixture();
+    ctx.llm.registerAdapter([PROVIDER], adapter);
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'test' }] }];
+    const headers = [], chats = [];
+    for (const sessionId of ['session-a', 'session-a', 'session-b']) {
+      const chunks = await collect(ctx.llm.stream({ provider: PROVIDER, model: 'test-model', sessionId, messages }));
+      assert.equal(chunks.at(-1).reason.kind, 'stop');
+      chats.push(chunks.filter(c => c.type === 'block-end').map(c => c.block.text).join(''));
+      headers.push(requests.filter(r => r.url.endsWith('/responses')).at(-1).init.headers.session_id);
+    }
+    assert.deepEqual(chats, ['works', 'works', 'works']);
+    assert.match(headers[0], /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(headers[0], headers[1]);            // one DSH session keeps one cache identity
+    assert.notEqual(headers[0], headers[2]);         // separate sessions never share the cache partition
+    assert.ok(!headers[0].includes('session-a'));    // the raw identity never reaches the wire
+    const anonymous = await collect(ctx.llm.stream({ provider: PROVIDER, model: 'test-model', messages }));
+    assert.equal(anonymous.at(-1).reason.kind, 'stop');
+    assert.equal(requests.filter(r => r.url.endsWith('/responses')).at(-1).init.headers.session_id, undefined);
+  } finally { await ctx.fiber.dispose(); }
+});
+
 test('plugin namespace activates and disposes its provider using real Cordis effects', async () => {
   const plugin = await import('../src/index.js');
   assert.deepEqual(Object.keys(plugin).sort(), ['Config', 'apply', 'inject', 'name']);

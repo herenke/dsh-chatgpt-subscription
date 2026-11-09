@@ -1,9 +1,28 @@
+import { createHash } from 'node:crypto';
 import { officialFetch, RESOURCE } from './auth.js';
 import { prepareImages, imageContent } from './images.js';
 import { saveReplay, readReplay } from './replay.js';
 import { LlmError } from '@deepseek-ai/dsh-llm';
 import { httpError, providerError } from './errors.js';
 
+/**
+ * Derive the transport session identity sent as the `session_id` header.
+ *
+ * The plan gateway reuses its prompt cache per conversation, and only requests
+ * carrying a stable conversation identity share that cache: two byte-identical
+ * requests without it report zero cached tokens, while the same request with a
+ * stable `session_id` reports 99% cached. The header is model-hidden transport
+ * metadata, so the DSH session identity is hashed into a UUID-shaped opaque
+ * value; auxiliary calls (`purpose`) get a separate identity so a title or
+ * compaction prompt never evicts the conversation prefix.
+ * @param value - the DSH session identity.
+ * @param purpose - optional provider-neutral auxiliary call classification.
+ * @returns a deterministic UUID-shaped session identifier.
+ */
+export function cacheSessionId(value, purpose) {
+  const hex = createHash('sha256').update(`${value}${purpose ? `:${purpose}` : ''}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 const WIRE_REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const REASONING_EFFORT_NAMES = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 /** Map the account catalog's reasoning levels to the selectable DSH metadata. */
@@ -110,9 +129,12 @@ export async function* responseChunks(events, features = {}) {
       const key = `${e.output_index}:tool`;
       if (blocks.has(key) || !e.item.call_id || !e.item.name || (e.item.namespace && e.item.namespace !== 'dsh')) throw new Error('Invalid OpenAI tool event.');
       tools = true;
-      const b = { index: nextIndex++, type: 'tool-call', id: e.item.call_id, name: e.item.name, arguments: '', ended: false }; blocks.set(key, b);
+      // The gateway may deliver the complete arguments on this item and stream no
+      // argument deltas at all, so the added payload is the initial block value.
+      const provided = typeof e.item.arguments === 'string' ? e.item.arguments : '';
+      const b = { index: nextIndex++, type: 'tool-call', id: e.item.call_id, name: e.item.name, arguments: provided, ended: false }; blocks.set(key, b);
       yield { type: 'block-start', index: b.index, blockType: 'tool-call' };
-      yield { type: 'tool-call-delta', index: b.index, id: b.id, name: b.name, argumentsDelta: '' };
+      yield { type: 'tool-call-delta', index: b.index, id: b.id, name: b.name, argumentsDelta: provided };
     } else if (e.type === 'response.function_call_arguments.delta') {
       const b = blocks.get(`${e.output_index}:tool`); if (!b || b.ended || typeof e.delta !== 'string') throw new Error('Invalid OpenAI tool delta.');
       b.arguments += e.delta;
@@ -125,10 +147,23 @@ export async function* responseChunks(events, features = {}) {
     } else if (e.type === 'response.function_call_arguments.done' || e.type === 'response.output_text.done') {
       const isTool = e.type === 'response.function_call_arguments.done';
       const key = isTool ? `${e.output_index}:tool` : keyOf(e);
+      const done = isTool ? e.arguments : e.text;
+      if (typeof done !== 'string') throw new Error('Invalid OpenAI block completion.');
       let b = blocks.get(key);
-      // Text can finish empty without any delta.
-      if (!b && !isTool && e.text === '') { b = { index: nextIndex++, type: 'text', text: '', ended: false }; blocks.set(key, b); yield { type: 'block-start', index: b.index, blockType: 'text' }; }
-      if (!b || b.ended || (isTool ? e.arguments !== b.arguments : e.text !== b.text)) throw new Error('OpenAI block completion mismatch.');
+      // Text can start and finish only here: the gateway may deliver the whole
+      // text in the done event without any deltas.
+      if (!b && !isTool) { b = { index: nextIndex++, type: 'text', text: '', ended: false }; blocks.set(key, b); yield { type: 'block-start', index: b.index, blockType: 'text' }; }
+      if (!b || b.ended) throw new Error('OpenAI block completion mismatch.');
+      // The done payload is authoritative and may legitimately extend what was
+      // streamed (including delivering everything when no deltas were sent).
+      // Content that does not extend the streamed value is treated as corruption.
+      const streamed = isTool ? b.arguments : b.text;
+      if (!done.startsWith(streamed)) throw new Error('OpenAI block completion mismatch.');
+      const rest = done.slice(streamed.length);
+      if (rest) {
+        if (isTool) { b.arguments = done; yield { type: 'tool-call-delta', index: b.index, id: b.id, argumentsDelta: rest }; }
+        else { b.text = done; yield { type: 'text-delta', index: b.index, text: rest }; }
+      }
       b.ended = true;
       const { index, ended, ...block } = b; emitted.push({ index, block }); yield { type: 'block-end', index, block };
     } else if (e.type === 'response.completed') {
@@ -175,7 +210,10 @@ export async function* infer(session, options, headers = {}, fetcher, features =
   const versions = await prepareImages(options, typeof features.attachments === 'function' ? features.attachments() : features.attachments);
   const replay = { session, model: options.model, provider: options.provider };
   const body = requestBody(options, versions, { ...features, replay });
-  const response = await officialFetch(`${RESOURCE}/responses`, { method: 'POST', headers: { ...headers, Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: options.signal }, fetcher);
+  // Cache and conversation affinity are keyed by this transport identity; without
+  // it the gateway treats every request as an unrelated conversation.
+  const cacheHeaders = options.sessionId === undefined ? {} : { session_id: cacheSessionId(String(options.sessionId), options.purpose) };
+  const response = await officialFetch(`${RESOURCE}/responses`, { method: 'POST', headers: { ...headers, ...cacheHeaders, Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: options.signal }, fetcher);
   if (!response.ok) throw await httpError(response);
   // The ChatGPT-plan gateway streams `event:`/`data:` SSE frames without a
   // Content-Type header (verified against a real account), so only reject a

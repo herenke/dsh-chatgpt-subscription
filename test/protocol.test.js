@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requestBody, sseEvents, responseChunks, listModels, infer } from '../src/protocol.js';
+import { requestBody, sseEvents, responseChunks, listModels, infer, cacheSessionId } from '../src/protocol.js';
 const collect = async source => { const result = []; for await (const item of source) result.push(item); return result; };
 async function* events(items) { yield* items; }
 const completed = { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 10, output_tokens: 3, input_tokens_details: { cached_tokens: 4 } } } };
@@ -49,6 +49,72 @@ test('post-delta quota failure, incomplete and disconnect never finish successfu
 test('mismatched tool completion and unsupported output fail closed', async () => {
   await assert.rejects(collect(responseChunks(events([{ type: 'response.function_call_arguments.done', output_index: 0, arguments: '{}' }]))));
   await assert.rejects(collect(responseChunks(events([{ type: 'response.output_item.added', item: { type: 'web_search_call' } }]))));
+});
+test('tool arguments delivered only in the done event still complete', async () => {
+  // Observed gateway stream: the added item carries empty arguments, no
+  // argument deltas arrive, and the done event holds the complete payload.
+  const chunks = await collect(responseChunks(events([
+    { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_a', name: 'bash', namespace: 'dsh', arguments: '' } },
+    { type: 'response.function_call_arguments.done', output_index: 0, arguments: '{"command":"pwd"}' },
+    completed,
+  ])));
+  const deltas = chunks.filter(c => c.type === 'tool-call-delta').map(c => c.argumentsDelta).join('');
+  const end = chunks.find(c => c.type === 'block-end');
+  assert.equal(end.block.arguments, '{"command":"pwd"}'); assert.equal(deltas, end.block.arguments);
+  assert.equal(chunks.at(-1).reason.kind, 'tool-calls'); assert.equal(chunks.at(-1).failure, undefined);
+});
+test('tool arguments already present on the added item are not duplicated', async () => {
+  const chunks = await collect(responseChunks(events([
+    { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_a', name: 'bash', namespace: 'dsh', arguments: '{"command":"pwd"}' } },
+    { type: 'response.function_call_arguments.done', output_index: 0, arguments: '{"command":"pwd"}' },
+    completed,
+  ])));
+  assert.equal(chunks.filter(c => c.type === 'tool-call-delta').map(c => c.argumentsDelta).join(''), '{"command":"pwd"}');
+  assert.equal(chunks.find(c => c.type === 'block-end').block.arguments, '{"command":"pwd"}');
+});
+test('text delivered only in the done event starts and ends its block', async () => {
+  const chunks = await collect(responseChunks(events([{ type: 'response.output_text.done', output_index: 0, content_index: 0, text: 'hello' }, completed])));
+  assert.deepEqual(chunks.map(c => c.type), ['block-start', 'text-delta', 'block-end', 'usage', 'finish']);
+  assert.equal(chunks[1].text, 'hello');
+  assert.deepEqual(chunks[2].block, { type: 'text', text: 'hello' });
+});
+test('a done payload that does not extend the streamed block still fails', async () => {
+  // Truncated payload, divergent payload and a repeated completion must not be
+  // silently accepted as a successful turn.
+  for (const terminal of [
+    [{ type: 'response.output_text.done', output_index: 0, content_index: 0, text: 'hel' }, completed],
+    [{ type: 'response.output_text.done', output_index: 0, content_index: 0, text: 'HELLO' }, completed],
+    [{ type: 'response.output_text.done', output_index: 0, content_index: 0, text: 'hello' }, { type: 'response.output_text.done', output_index: 0, content_index: 0, text: 'hello' }, completed],
+  ]) {
+    const chunks = [];
+    await assert.rejects(async () => { for await (const c of responseChunks(events([{ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: 'hello' }, ...terminal]))) chunks.push(c); });
+    assert.ok(!chunks.some(c => c.type === 'finish'));
+  }
+});
+test('cache session identity is opaque, deterministic and unique per purpose', () => {
+  const id = cacheSessionId('dsh-session-1');
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(id, cacheSessionId('dsh-session-1'));
+  assert.notEqual(id, cacheSessionId('dsh-session-2'));
+  assert.notEqual(id, cacheSessionId('dsh-session-1', 'compaction'));
+  assert.notEqual(cacheSessionId('dsh-session-1'), cacheSessionId('dsh-session-1', 'session-title'));
+  assert.ok(!id.includes('dsh-session-1'));
+});
+test('inference sends the session identity header and omits it without one', async () => {
+  const seen = [];
+  const fetcher = async (url, init) => {
+    seen.push(init.headers.session_id);
+    return new Response(textEvents.map(e => `data: ${JSON.stringify(e)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  const messages = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }];
+  await collect(infer({ accessToken: 'test-token' }, { model: 'm', messages, sessionId: 'session-a' }, { 'user-agent': 'dsh-test' }, fetcher));
+  await collect(infer({ accessToken: 'test-token' }, { model: 'm', messages, sessionId: 'session-a' }, {}, fetcher));
+  await collect(infer({ accessToken: 'test-token' }, { model: 'm', messages, sessionId: 'session-b' }, {}, fetcher));
+  await collect(infer({ accessToken: 'test-token' }, { model: 'm', messages, sessionId: 'session-a', purpose: 'session-title' }, {}, fetcher));
+  await collect(infer({ accessToken: 'test-token' }, { model: 'm', messages }, {}, fetcher));
+  assert.equal(seen[0], cacheSessionId('session-a')); assert.equal(seen[1], cacheSessionId('session-a'));
+  assert.equal(seen[2], cacheSessionId('session-b')); assert.equal(seen[3], cacheSessionId('session-a', 'session-title'));
+  assert.equal(seen[4], undefined);
 });
 test('mock wire inference uses public endpoint, bearer, attribution and required flags', async () => {
   const response = textEvents.map(e => `data: ${JSON.stringify(e)}\n\n`).join(''); let count = 0;
